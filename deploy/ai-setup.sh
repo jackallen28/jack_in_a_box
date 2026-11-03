@@ -53,5 +53,5 @@ echo "==> Downloading the model: $MODEL"
 run ollama pull "$MODEL"
 
 echo
-echo "Done. In the web page: Text & sorting -> Summary engine = Local AI -> Save -> 'Test AI summary'."
+echo "Done. The AI is installed but OFF. In the web page: Text & sorting -> 'Test AI summary', then 'Switch on AI mode'."
 echo "Expect roughly 1-3 minutes per forwarded email on a 3B+ (first run is slowest while the model loads from the SD card)."

@@ -63,27 +63,44 @@ def _usb_write(vendor: int, product: int | None, data: bytes) -> None:
         import usb.core  # type: ignore
         import usb.util  # type: ignore
     except ImportError as e:
-        raise PrinterError("pyusb is not installed (pip install pyusb), or use backend 'file'") from e
+        raise PrinterError("The USB library (pyusb) isn't installed. Update the app (Account tab) or run: "
+                           "~/jack_in_a_box/.venv/bin/pip install pyusb") from e
     kw = {"idVendor": vendor}
     if product:
         kw["idProduct"] = product
-    dev = usb.core.find(**kw)
-    if dev is None:
-        raise PrinterError("Printer not found on USB - is it powered on and plugged in?")
     try:
-        if dev.is_kernel_driver_active(0):
-            dev.detach_kernel_driver(0)
-    except (NotImplementedError, usb.core.USBError):
-        pass
-    dev.set_configuration()
-    cfg = dev.get_active_configuration()
-    intf = cfg[(0, 0)]
-    ep = usb.util.find_descriptor(intf, custom_match=lambda e: usb.util.endpoint_direction(e.bEndpointAddress) == usb.util.ENDPOINT_OUT)
-    if ep is None:
-        raise PrinterError("No OUT endpoint on the printer")
-    for i in range(0, len(data), 16384):
-        ep.write(data[i:i + 16384], timeout=10000)
-    usb.util.dispose_resources(dev)
+        dev = usb.core.find(**kw)
+    except usb.core.NoBackendError as e:
+        raise PrinterError("The USB system library is missing: sudo apt-get install -y libusb-1.0-0") from e
+    if dev is None:
+        raise PrinterError("Printer not found on USB - is it switched on and plugged into the Pi? (lsusb should list 04b8)")
+    try:
+        try:
+            if dev.is_kernel_driver_active(0):
+                dev.detach_kernel_driver(0)
+        except (NotImplementedError, usb.core.USBError):
+            pass
+        dev.set_configuration()
+        cfg = dev.get_active_configuration()
+        intf = cfg[(0, 0)]
+        ep = usb.util.find_descriptor(intf, custom_match=lambda e: usb.util.endpoint_direction(e.bEndpointAddress) == usb.util.ENDPOINT_OUT)
+        if ep is None:
+            raise PrinterError("The printer has no data endpoint to write to")
+        for i in range(0, len(data), 16384):
+            ep.write(data[i:i + 16384], timeout=10000)
+    except usb.core.USBError as e:
+        msg = str(e)
+        if getattr(e, "errno", None) == 13 or "denied" in msg.lower():
+            raise PrinterError("No permission to use the USB printer. The installer's rule needs a reboot to take effect "
+                               "(or: sudo udevadm trigger), and the user must be in the 'lp' group.") from e
+        if getattr(e, "errno", None) == 16 or "busy" in msg.lower():
+            raise PrinterError("The USB printer is busy (another program is using it). Try again in a moment.") from e
+        raise PrinterError(f"USB printing failed: {msg}") from e
+    finally:
+        try:
+            usb.util.dispose_resources(dev)
+        except Exception:
+            pass
 
 
 def _int(v, default=None):
@@ -131,9 +148,18 @@ def check(cfg: dict) -> tuple[bool, str]:
         try:
             import usb.core  # type: ignore
         except ImportError:
-            return False, "pyusb isn't installed and no /dev/usb/lp0 exists. Use the 'USB device file' option or pip install pyusb."
-        dev = usb.core.find(idVendor=_int(cfg.get("usb_vendor"), 0x04B8))
-        return (True, "USB printer found.") if dev else (False, "No Epson USB printer found.")
+            return False, ("The USB library (pyusb) isn't installed. It arrives with the next update (Account tab -> Check & update now), "
+                           "or run:  ~/jack_in_a_box/.venv/bin/pip install pyusb  then restart the app.")
+        try:
+            dev = usb.core.find(idVendor=_int(cfg.get("usb_vendor"), 0x04B8))
+        except usb.core.NoBackendError:
+            return False, "The USB system library is missing. Run:  sudo apt-get install -y libusb-1.0-0  then restart the app."
+        except Exception as e:
+            return False, f"Couldn't look for the printer on USB: {e}"
+        if dev is None:
+            return False, ("No Epson printer found on USB. Check it is switched on and the USB cable is in the Pi. "
+                           "Running  lsusb  on the Pi should list a device starting 04b8.")
+        return True, "USB printer found (direct USB)."
     return False, f"Unknown backend {backend!r}"
 
 

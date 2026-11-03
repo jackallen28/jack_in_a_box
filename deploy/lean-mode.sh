@@ -72,14 +72,27 @@ fi
 $SUDO install -m 644 /tmp/jiab-lean-state.$$ "$STATE"; rm -f /tmp/jiab-lean-state.$$
 
 echo "==> Compressed swap (zram)"
-if [[ -z "$DRY" ]]; then
-  run apt-get install -y -qq zram-tools
-  printf 'ALGO=lz4\nPERCENT=100\nPERCENTAGE=100\nPRIORITY=100\n' | $SUDO tee /etc/default/zramswap >/dev/null
-  printf 'vm.swappiness=100\nvm.vfs_cache_pressure=200\n' | $SUDO tee /etc/sysctl.d/99-jack-in-a-box.conf >/dev/null
-  run systemctl restart zramswap || true
-  $SUDO sysctl -q --system || true
+# Newer Raspberry Pi OS releases already set up compressed swap; adding a second one can fail, so check first.
+zram_active() {
+  case "${JIAB_ZRAM_ACTIVE:-}" in no) return 1 ;; "") ;; *) return 0 ;; esac     # override used by the tests
+  swapon --noheadings --show=NAME 2>/dev/null | grep -q zram
+}
+if zram_active; then
+  echo "   compressed swap is already active - leaving it as it is"
+elif [[ -n "$DRY" ]]; then
+  echo "   (dry run) would install zram-tools and enable compressed swap"
 else
-  echo "   (dry run) would install zram-tools and set vm.swappiness=100"
+  run apt-get install -y -qq zram-tools || true
+  printf 'ALGO=lz4\nPERCENT=100\nPERCENTAGE=100\nPRIORITY=100\n' | $SUDO tee /etc/default/zramswap >/dev/null
+  if ! run systemctl restart zramswap; then
+    echo "   !! compressed swap couldn't start on this system. That's OK: it's a nice-to-have, the AI works without it."
+    run systemctl disable zramswap || true
+  fi
+fi
+if [[ -z "$DRY" ]] && zram_active; then
+  # aggressive swapping is only sensible onto RAM-backed zram, never onto the SD card
+  printf 'vm.swappiness=100\nvm.vfs_cache_pressure=200\n' | $SUDO tee /etc/sysctl.d/99-jack-in-a-box.conf >/dev/null
+  $SUDO sysctl -q --system || true
 fi
 
 echo
