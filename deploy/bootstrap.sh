@@ -8,7 +8,7 @@
 set -euo pipefail
 
 REPO="${REPO:-https://github.com/jackallen28/jackallen.git}"
-BRANCH="${BRANCH:-claude/youthful-bardeen-b6h2r9}"
+BRANCH="${BRANCH:-jack-in-a-box}"
 DEST="${DEST:-$HOME/jack-in-a-box-src}"
 
 sudo apt-get update -qq

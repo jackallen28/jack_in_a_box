@@ -41,13 +41,13 @@ One command, run on the Pi (over SSH is fine). It installs everything, sets the 
 automatically every time the Pi boots** (and restart itself if it ever crashes), and starts it now:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jackallen28/jackallen/claude/youthful-bardeen-b6h2r9/jack-in-a-box/deploy/bootstrap.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jackallen28/jackallen/jack-in-a-box/jack-in-a-box/deploy/bootstrap.sh | bash
 ```
 
 If the GitHub repo is private, the `curl` won't work; use git instead (it will ask for your login/token):
 
 ```bash
-git clone --depth 1 -b claude/youthful-bardeen-b6h2r9 https://github.com/jackallen28/jackallen.git
+git clone --depth 1 -b jack-in-a-box https://github.com/jackallen28/jackallen.git
 bash jackallen/jack-in-a-box/deploy/install.sh
 ```
 
