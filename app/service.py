@@ -206,6 +206,7 @@ class Service:
                 (self.hist_dir / row["png"]).unlink(missing_ok=True)
         self.db.execute("DELETE FROM jobs WHERE created<? AND status!='pending'", (cutoff,))
         self.db.execute("DELETE FROM seen WHERE ts<?", (cutoff,))
+        self.db.execute("DELETE FROM sheet_rows WHERE first_seen<? AND status IN ('deleted','ignored','empty')", (cutoff,))
         self.db.execute("DELETE FROM cal_events WHERE first_seen<? AND status!='pending'", (cutoff,))
 
     # ---------------------------------------------------------------- status

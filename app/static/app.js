@@ -68,7 +68,7 @@ $("#logout").addEventListener("click", async () => { await api("/api/logout", { 
 
 /* ---------------------------------------------------------------- tabs */
 const TABS = [
-  ["dashboard", "Dashboard"], ["print", "Print"], ["messages", "Messages"], ["symbols", "Symbols"], ["power", "Power & fan"], ["templates", "Templates"], ["email", "Email"], ["calendar", "Calendar"],
+  ["dashboard", "Dashboard"], ["print", "Print"], ["form", "Google Form"], ["messages", "Messages"], ["symbols", "Symbols"], ["power", "Power & fan"], ["templates", "Templates"], ["email", "Email"], ["calendar", "Calendar"],
   ["text", "Text & sorting"], ["rules", "Rules"], ["printer", "Printer"], ["integrations", "Integrations"],
   ["playground", "Try it"], ["account", "Account"],
 ];
@@ -79,7 +79,7 @@ function renderTabs() {
 function go(tab) {
   TAB = tab; clearInterval(POLL); POLL = null; renderTabs();
   const main = $("#main"); main.replaceChildren();
-  ({ dashboard, print: printPage, messages, symbols, power: powerPage, templates, email: () => simple("email", "Email account"), calendar, text: () => simple("text", "Text, dates & summaries"),
+  ({ dashboard, print: printPage, form: formPage, messages, symbols, power: powerPage, templates, email: () => simple("email", "Email account"), calendar, text: () => simple("text", "Text, dates & summaries"),
      rules, printer: () => simple("printer", "Printer"), integrations, playground, account }[tab])(main);
   window.scrollTo(0, 0);
 }
@@ -286,6 +286,7 @@ function dashboard(main) {
       st.printer.held ? h("div", { class: "banner" }, `${st.printer.held} message${st.printer.held > 1 ? "s" : ""} waiting for the button  `,
         h("button", { class: "btn small primary", onclick: async () => { await api("/api/release", { method: "POST" }); toast("Printing waiting messages"); refresh(); } }, "Print them now"),
         h("button", { class: "btn small danger", onclick: async () => { if (confirm("Throw away all waiting messages?")) { await api("/api/discard-held", { method: "POST" }); refresh(); } } }, "Discard all")) : null,
+      st.sheet && st.sheet.state && st.sheet.state !== "disabled" ? h("div", {}, `Google Form: ${st.sheet.state}${st.sheet.last_check ? ", checked " + st.sheet.last_check : ""}${st.sheet.error ? " - " + st.sheet.error : ""}`) : null,
       st.cpu_temp != null ? h("div", {}, `CPU ${st.cpu_temp.toFixed(0)}°C` + (st.fan && st.fan.state === "ok" ? ` · fan ${st.fan.fan_on ? "ON" : "off"}` : "")) : null,
       h("div", {}, `Button: ${st.button.state === "ok" ? "ready - " : ""}${st.button.message}`),
       h("div", {}, `Mailbox: ${st.mail.state}${st.mail.last_check ? " (checked " + st.mail.last_check + ")" : ""}${st.mail.error ? " - " + st.mail.error : ""}`),
@@ -688,6 +689,74 @@ function powerPage(main) {
   main.append(h("div", { class: "card small" }, h("h3", {}, "Lower idle power"),
     "Run ", h("code", {}, "bash deploy/eco-mode.sh"), " on the Pi (then reboot) to turn off the LEDs, Bluetooth and HDMI and put Wi-Fi in power-save. ",
     "The saving is modest (a few hundred milliwatts); the Pi already slows its CPU when idle. ", h("code", {}, "bash deploy/eco-mode.sh --undo"), " reverses it."));
+}
+
+/* ---------------------------------------------------------------- Google Form -> Sheet -> print */
+function copyFrom(el) {
+  el.focus(); el.select();
+  try { document.execCommand("copy"); toast("Copied"); } catch (e) { toast("Press Ctrl+C (or Cmd+C) to copy", true); }
+}
+function formPage(main) {
+  const status = h("div", { class: "small" });
+  const symbols = h("textarea", { readonly: true, style: "min-height:150px;font-family:ui-monospace,monospace" });
+  const script = h("textarea", { readonly: true, style: "min-height:200px;font-family:ui-monospace,monospace;font-size:.75rem", placeholder: "Press “Show my script”" });
+  const result = h("div", { class: "small", style: "margin-top:8px" });
+  const mapping = h("div", { class: "small muted", style: "margin-top:6px" });
+
+  async function refresh() {
+    const st = await api("/api/status"), s = st.sheet || {};
+    status.replaceChildren(h("div", {}, !CFG.sheet.enabled ? "Not switched on yet (Step 3)." :
+      `Google Form link: ${s.state || "starting"}${s.last_check ? ", last checked " + s.last_check : ""}${s.error ? " - " + s.error : ""}`));
+  }
+  refresh(); POLL = setInterval(() => refresh().catch(() => {}), 6000);
+  api("/api/icons").then(r => { symbols.value = r.icons.filter(i => i.enabled).map(i => i.name).join("\n"); });
+
+  main.append(h("div", { class: "card" }, h("h2", {}, "Print from a Google Form"),
+    h("p", { class: "small" }, "Make a Google Form (on your phone or computer) with a heading, body, up to three symbols and an image upload. Every time it's submitted, Google adds a row to a spreadsheet; this box checks the sheet, ",
+      h("strong", {}, "prints each new row"), ", and ", h("strong", {}, "deletes the row once it has printed"), ". Rows waiting for the printer or for the button stay in the sheet until they print."), status));
+
+  main.append(h("div", { class: "card" }, h("h3", {}, "Step 1: make the form"),
+    h("p", { class: "small" }, "Go to forms.google.com -> Blank form. Add these questions with exactly these titles (the box recognises them by name):"),
+    h("ol", { class: "small" },
+      h("li", {}, h("strong", {}, "Message or reminder?"), " - Dropdown: ", h("code", {}, "Reminder"), " and ", h("code", {}, "Message"), ". (Reminder = tidied up, split into tasks, dates found. Message = printed as written under a MESSAGE title.)"),
+      h("li", {}, h("strong", {}, "Symbol 1"), ", ", h("strong", {}, "Symbol 2"), ", ", h("strong", {}, "Symbol 3"), " - Dropdown (optional). Paste the list below as the options."),
+      h("li", {}, h("strong", {}, "Heading"), " - Short answer."),
+      h("li", {}, h("strong", {}, "Body"), " - Paragraph."),
+      h("li", {}, h("strong", {}, "Image"), " - File upload (images only, up to 3 files, 10 MB).")),
+    h("p", { class: "small" }, "Then: ", h("strong", {}, "Settings -> Responses -> Collect email addresses: Verified"), " (so the box knows who sent it: your own address, set under ",
+      h("a", { href: "#", onclick: e => { e.preventDefault(); go("email"); } }, "Who can email the printer?"), ", prints straight away). Finally ",
+      h("strong", {}, "Responses tab -> Link to Sheets"), " to create the spreadsheet."),
+    h("div", { class: "f" }, h("label", { class: "l" }, "Symbol dropdown options (one per line)"), symbols,
+      h("div", { class: "row" }, h("button", { class: "btn small", onclick: () => copyFrom(symbols) }, "Copy list"))),
+    h("p", { class: "small muted" }, "Good to know: Google only allows file uploads from people signed in to a Google account, and uploaded pictures are kept in your Google Drive. Only share the form with people you trust.")));
+
+  main.append(h("div", { class: "card" }, h("h3", {}, "Step 2: add the script to the spreadsheet"),
+    h("ol", { class: "small" },
+      h("li", {}, "Open the linked spreadsheet -> ", h("strong", {}, "Extensions -> Apps Script"), "."),
+      h("li", {}, "Delete what's there, press ", h("strong", {}, "Show my script"), " below, ", h("strong", {}, "Copy script"), ", paste it in, and Save."),
+      h("li", {}, h("strong", {}, "Deploy -> New deployment"), " -> type ", h("strong", {}, "Web app"), " -> Execute as: ", h("strong", {}, "Me"), "; Who has access: ", h("strong", {}, "Anyone"), " -> Deploy."),
+      h("li", {}, "Google asks you to authorise it (“unverified app”: Advanced -> Go to ... -> Allow). That's your own script reading your own sheet."),
+      h("li", {}, "Copy the ", h("strong", {}, "Web app URL"), " it shows.")),
+    h("p", { class: "small muted" }, "“Anyone” just means no Google login is needed to call it; every request still has to carry the secret code that's inside your script, so nobody else can read or change the sheet through it."),
+    h("div", { class: "row" },
+      h("button", { class: "btn primary", onclick: async () => { const r = await api("/api/sheet-script", { method: "POST", json: {} }); script.value = r.script; toast("Script ready: press Copy script"); } }, "Show my script"),
+      h("button", { class: "btn", onclick: () => script.value ? copyFrom(script) : toast("Press “Show my script” first", true) }, "Copy script"),
+      h("button", { class: "btn small danger", onclick: async () => { if (!confirm("Make a new secret code? You must paste the new script into the sheet again.")) return; const r = await api("/api/sheet-script", { method: "POST", json: { regenerate: true } }); script.value = r.script; toast("New code made: paste the new script into the sheet"); } }, "Make a new secret code")),
+    script));
+
+  main.append(h("div", { class: "card" }, h("h3", {}, "Step 3: connect it"), form(SCHEMA.sections.sheet),
+    h("div", { class: "row" },
+      h("button", { class: "btn primary", onclick: async () => {
+        if (dirty) return toast("Save your changes first, then test.", true);
+        result.textContent = "Connecting to Google…"; result.style.color = "";
+        const r = await api("/api/sheet-test", { method: "POST" }); result.textContent = r.message; result.style.color = r.ok ? "var(--ok)" : "var(--bad)";
+        if (r.ok) {
+          const m = r.mapping, sy = (m.symbols || []).join(", ") || "none";
+          mapping.textContent = `Recognised columns - type: ${m.type || "none (all rows = Reminder)"}; heading: ${m.heading || "none"}; body: ${m.body || "none"}; symbols: ${sy}; image: ${m.image || "none"}; sender email: ${m.email || "none (uses the 'someone not on your lists' setting)"}.`;
+        } else mapping.textContent = "";
+      } }, "Test connection"),
+      h("button", { class: "btn", onclick: async () => { await api("/api/sheet-check", { method: "POST" }); toast("Checking the sheet now…"); setTimeout(refresh, 3000); } }, "Check the sheet now")),
+    result, mapping));
 }
 
 /* ---------------------------------------------------------------- account */

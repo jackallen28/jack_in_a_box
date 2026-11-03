@@ -18,6 +18,11 @@ CREATE INDEX IF NOT EXISTS jobs_status ON jobs(status, id);
 CREATE TABLE IF NOT EXISTS seen (
     key TEXT PRIMARY KEY, ts TEXT NOT NULL, status TEXT, info TEXT
 );
+CREATE TABLE IF NOT EXISTS sheet_rows (
+    id TEXT PRIMARY KEY, first_seen TEXT NOT NULL,
+    status TEXT NOT NULL,                        -- queued | empty | ignored | error | deleted
+    jobs TEXT, note TEXT
+);
 CREATE TABLE IF NOT EXISTS cal_events (
     key TEXT PRIMARY KEY, cal_id TEXT, start TEXT, end TEXT,
     first_seen TEXT NOT NULL, due TEXT,

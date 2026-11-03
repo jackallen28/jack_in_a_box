@@ -218,6 +218,14 @@ DEFAULTS: dict = {
         "notes_chars": 300,
     },
     "updates": {"enabled": True},
+    # Google Form -> Google Sheet -> printouts (see app/sheet.py and app/apps_script.js)
+    "sheet": {
+        "enabled": False,
+        "url": "",                  # the Apps Script "Web app URL"
+        "token": "",                # secret code shared with that script
+        "poll_seconds": 60,
+        "unknown_policy": "hold",   # rows from someone not on your lists: hold (wait for the button) | print | ignore
+    },
     "fan": {
         "enabled": False,
         "pin": 22,                  # BCM. Drive a transistor/MOSFET that switches the fan - never the fan itself.

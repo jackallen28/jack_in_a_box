@@ -230,6 +230,14 @@ SECTIONS = {
         F("power.min_uptime_minutes", "Never power off in the first (minutes after boot)", "number", min=5, max=600),
         F("power.keep_awake_before_calendar_hours", "Stay on if a calendar reminder prints within (hours)", "number", min=0, max=72),
     ],
+    "sheet": [
+        F("sheet.enabled", "Print new rows from the Google Sheet", "bool"),
+        F("sheet.url", "Web app URL (from the Apps Script deployment)", help="Starts with https://script.google.com/macros/s/ and ends with /exec"),
+        F("sheet.poll_seconds", "Check the sheet every (seconds)", "number", min=15, max=3600),
+        F("sheet.unknown_policy", "Rows from someone who isn't on your lists", "select", options=opts(
+            ("hold", "Hold them until I press the button"), ("print", "Print them straight away"), ("ignore", "Ignore them (leave in the sheet)")),
+          help="Turn on 'Collect email addresses: Verified' in the form so Google tells us who submitted each row. Your own address (Who can email the printer?) always prints straight away."),
+    ],
     "updates": [
         F("updates.enabled", "Install updates automatically", "bool",
           "Checks GitHub hourly. After an update the app restarts and the page is tested; if it doesn't come up it rolls back by itself."),

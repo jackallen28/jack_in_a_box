@@ -18,7 +18,7 @@ from flask import Flask, jsonify, request, send_file, send_from_directory, sessi
 from PIL import Image, ImageOps
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from . import icons as icon_lib, llm, plugins, schema
+from . import icons as icon_lib, llm, plugins, schema, sheet as sheet_mod
 from .config import APP_DIR, DATA_DIR, ROOT, KIND_DEFAULTS, ConfigStore, default_template, merge
 from .mailbox import MailPoller
 from .mailparse import Incoming, _load_image, parse
@@ -31,7 +31,7 @@ log = logging.getLogger("web")
 PUBLIC_API = {"/api/state", "/api/login", "/api/setup", "/api/print"}
 
 
-def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button, fan=None, power=None) -> Flask:
+def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button, fan=None, power=None, sheet=None) -> Flask:
     app = Flask(__name__, static_folder=str(APP_DIR / "static"), static_url_path="/static")
     app.secret_key = cfg.data["web"]["secret_key"]
     app.config.update(SESSION_COOKIE_SAMESITE="Strict", SESSION_COOKIE_HTTPONLY=True,
@@ -154,6 +154,8 @@ def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button, 
         c = copy.deepcopy(cfg.data)
         c["email"]["password_set"] = bool(c["email"].get("password"))
         c["email"]["password"] = ""
+        c["sheet"]["token_set"] = bool(c["sheet"].get("token"))
+        c["sheet"]["token"] = ""
         c["web"] = {"port": c["web"]["port"]}
         return c
 
@@ -170,6 +172,9 @@ def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button, 
         new["web"] = old["web"]                      # never editable from the browser
         new["setup_complete"] = old.get("setup_complete", False)
         new.get("email", {}).pop("password_set", None)
+        new.setdefault("sheet", {}).pop("token_set", None)
+        if not new["sheet"].get("token"):
+            new["sheet"]["token"] = old["sheet"].get("token", "")
         if not new.get("email", {}).get("password"):
             new.setdefault("email", {})["password"] = old["email"].get("password", "")
         if not new["integrations"].get("api_token") and new["integrations"].get("api_enabled"):
@@ -190,6 +195,8 @@ def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button, 
             fan.reconfigure()
         poller.kick.set()
         cal.kick.set()
+        if sheet is not None:
+            sheet.kick.set()
         return jsonify(public_config())
 
     @app.get("/api/schema")
@@ -211,6 +218,7 @@ def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button, 
         from .power import read_cpu_temp
         return jsonify(printer=svc.status(), mail=poller.status, calendar=cal.status, button=button.status,
                        cpu_temp=read_cpu_temp(), fan=(fan.status if fan is not None else None),
+                       sheet=(sheet.status if sheet is not None else None),
                        now=datetime.now().strftime("%a %d %b %H:%M"),
                        email_configured=bool(cfg.data["email"]["username"] and cfg.data["email"]["enabled"]))
 
@@ -405,6 +413,34 @@ def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button, 
     @app.get("/api/ai-test")
     def ai_test_result():
         return jsonify(llm.test_state())
+
+    @app.post("/api/sheet-script")
+    def sheet_script():
+        """The Apps Script to paste into the Google Sheet, with this app's secret code already inside."""
+        d = cfg.data
+        if (request.json or {}).get("regenerate") or not d["sheet"].get("token"):
+            d["sheet"]["token"] = secrets.token_urlsafe(24)
+            cfg.replace(d)
+        script = (APP_DIR / "apps_script.js").read_text("utf-8").replace("__TOKEN__", cfg.data["sheet"]["token"])
+        return jsonify(script=script)
+
+    @app.post("/api/sheet-test")
+    def sheet_test():
+        try:
+            data = sheet_mod.call(cfg.data, "rows", timeout=30)
+        except sheet_mod.SheetError as e:
+            return jsonify(ok=False, message=str(e))
+        cols = sheet_mod.detect_columns(data.get("headers", []))
+        n = len(data.get("rows", []))
+        return jsonify(ok=True, message=f"Connected. {n} row{'s' if n != 1 else ''} waiting in the sheet.",
+                       headers=data.get("headers", []), mapping=cols)
+
+    @app.post("/api/sheet-check")
+    def sheet_check():
+        if sheet is not None:
+            sheet._last_poll = 0
+            sheet.kick.set()
+        return jsonify(ok=True)
 
     @app.post("/api/test-email")
     def test_email():

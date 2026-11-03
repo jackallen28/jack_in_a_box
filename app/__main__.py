@@ -12,6 +12,7 @@ from .gpio import ButtonController
 from .mailbox import MailPoller
 from .power import FanController, PowerManager
 from .service import RingHandler, Service
+from .sheet import SheetPoller
 from .web import create_app
 
 
@@ -42,7 +43,9 @@ def main() -> None:
     fan, power = FanController(cfg), PowerManager(cfg, svc)
     fan.start()
     power.start()
-    app = create_app(cfg, svc, poller, cal, button, fan, power)
+    sheet = SheetPoller(cfg, svc)
+    sheet.start()
+    app = create_app(cfg, svc, poller, cal, button, fan, power, sheet)
 
     port = int(cfg.data["web"].get("port", 8080))
     log = logging.getLogger("app")

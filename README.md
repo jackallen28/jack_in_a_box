@@ -30,6 +30,7 @@ page at the Pi's IP address.
 | `Shopping:` followed by `- milk` `- eggs` | one printout with a checklist |
 | An email from a **friend** on your list | a `MESSAGE` printout with their name, held until you press the **button** (LED flashes while any wait) |
 | Text typed on the web page's **Print** tab | prints straight away, same cleanup as email, photos optional |
+| A row submitted through your **Google Form** (heading, body, symbols 1-3, image upload) | printed like an email; the row is **deleted from the sheet once it has printed** |
 | `[school]` / `[!]` / `[3d printer]` in the subject or text | that hand-drawn symbol prints above the heading |
 | An email with a photo | **one** printout (all the text in one box) with the photo underneath |
 | Subject line | printed as the bold heading; no subject → no heading |
@@ -183,6 +184,28 @@ Pin numbers are GPIO/BCM numbers and can be changed on the Messages tab. Default
 
 Then tick **Use a physical button + LED** and Save. *Flash the LED* tests the LED; *Press the button (from here)* does what the button does.
 The installer adds you to the `gpio` group; if the page says "GPIO not available", reboot once.
+
+## Print from a Google Form
+
+A Google Form on your phone becomes a way to send text, symbols and a picture to the printer. Every submission is a row in a Google Sheet; the box
+checks it every minute, **prints each new row once, then deletes the row after it has actually printed** (a row waiting for the printer or the button stays
+in the sheet until it prints). Set it up on the **Google Form** tab, which has every step and a copy button for each piece. In short:
+
+1. **Make the form** with these question titles: `Message or reminder?` (dropdown *Reminder* / *Message*), `Symbol 1`, `Symbol 2`, `Symbol 3` (dropdowns; the tab gives
+   you the list of symbol names to paste), `Heading` (short answer), `Body` (paragraph), `Image` (file upload). Turn on *Collect email addresses: Verified*, and link the form to a Sheet.
+2. **Paste the script** the tab generates into the sheet (Extensions -> Apps Script), then Deploy -> Web app -> *Execute as: Me, Who has access: Anyone*.
+3. **Paste the Web app URL** into the tab, switch it on, press *Test connection*.
+
+How a row prints:
+* **Reminder** rows go through the same tidy-up as an email (spelling, split into tasks, dates become a DUE line, `[tags]` in the text work). **Message** rows print as written
+  under a `MESSAGE` title. Symbol 1-3 print above the heading; a photo makes it one printout with the picture under the text.
+* **Who sent it** comes from the verified email Google records: your own address prints straight away; a friend on your list always gets a MESSAGE and waits for the button unless
+  you ticked *Skip the queue*; anyone else follows the *"someone who isn't on your lists"* setting (hold for the button / print / ignore).
+* A bad or empty row never blocks the ones behind it; a row that couldn't print is left in the sheet for you to see.
+
+No Google password or key is stored on the Pi: only the script's web address and a secret code that the script checks on every request. Google only lets people who are signed in
+upload files, and uploaded pictures stay in your Google Drive (the box deletes the sheet row, not the Drive file). I could test the Pi side and the script's logic, but not
+Google Forms itself, so expect to need one pass of "does Google's screen look like step 3 says".
 
 ## Symbols: [school], [!], [3d printer] ...
 
