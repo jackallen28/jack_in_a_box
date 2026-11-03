@@ -25,7 +25,8 @@ ACTION_WORDS = {"actions", "action", "actionitems", "todo", "todos", "tasks", "r
 DEADLINE_WORDS = {"deadlines", "deadline", "dates", "when", "dues"}
 
 STOP = set("""a an and are as at be by do for from have i if in is it me my of on or our that the their them then there
-these this to up was we what when where which will with you your please about can could should would just also""".split())
+these this to up was we what when where which will with you your please about can could should would just also
+how much many who whom whose why""".split())
 
 # groups of words that mean (nearly) the same thing, by stem
 _SYN = [
@@ -136,7 +137,7 @@ def find_focus(phrase: str, sentences: list[str], limit: int = 2) -> list[str]:
     else:
         phrase = _REPLYISH.sub("reply", phrase)
         words = [w for w in re.findall(r"[A-Za-z0-9$]+", phrase) if w.lower() not in STOP]
-        topic = {_canon(w) for w in words if not _DATEWORD.match(w)}
+        topic_words = [w for w in words if not _DATEWORD.match(w)]
         dates = {w.lower() for w in words if _DATEWORD.match(w)}
         money_q = any(w.lower() in _MONEY_WORDS or stem(w) in _MONEY_WORDS for w in words)
         if not words:
@@ -144,15 +145,22 @@ def find_focus(phrase: str, sentences: list[str], limit: int = 2) -> list[str]:
         scored = []
         for i, s in enumerate(sentences):
             s2 = _REPLYISH.sub("reply", s)
-            toks = {_canon(w) for w in re.findall(r"[A-Za-z0-9$]+", s2)}
-            raw = {w.lower() for w in re.findall(r"[A-Za-z0-9]+", s2)}
-            hit = len(topic & toks)
+            toks = re.findall(r"[A-Za-z0-9$]+", s2)
+            stems = {stem(t) for t in toks}
+            canon = {_canon(t) for t in toks}
+            raw = {t.lower() for t in toks}
+            # an exact word beats a synonym ("invoice" in the sentence beats "payment")
+            weights = [1.0 if stem(w) in stems else 0.6 if _canon(w) in canon else 0.0 for w in topic_words]
+            hit, n_hit = sum(weights), sum(1 for x in weights if x)
             dhit = min(1.5, len(dates & raw) + (0.5 if dates and has_date(s) else 0.0))
             act = 0.3 if _ACTIONISH.search(s2) else 0.0
+            amount = bool(_MONEY.search(s))
             if hit:
-                score = hit / math.sqrt(max(1, len(topic))) + 0.8 * dhit + act + (0.4 if hit == len(topic) else 0.0)
-            elif money_q and _MONEY.search(s):
-                score = 1.0 + act                       # "how much?" is answered by a dollar amount
+                score = hit / math.sqrt(max(1, len(topic_words))) + 0.8 * dhit + act + (0.4 if n_hit == len(topic_words) else 0.0)
+                if money_q and amount:
+                    score += 0.8                        # "how much?" is answered by a sentence with an amount in it
+            elif money_q and amount:
+                score = 1.0 + act
             elif dates and dhit >= 1 and act:
                 score = 0.6 * dhit + 0.5                # no matching topic word, but the right date and a request
             else:

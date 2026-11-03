@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import logging
 from datetime import datetime, timezone
 from email.utils import parseaddr
 from zoneinfo import ZoneInfo
@@ -12,7 +13,7 @@ from .mailparse import Incoming
 from .models import Card, Section
 from . import emailclean
 from .focus import find_focus, parse_focus
-from .summarise import finish, pick, prepare
+from .summarise import finish, pick, prepare_thread
 from .textproc import _dedupe, build_items, clean_body, fix_text, pop_leading_tags, sort_items, split_blocks
 
 
@@ -56,6 +57,9 @@ def _name_only(from_header: str) -> str:
     return name or addr or ""
 
 
+log = logging.getLogger("forward")
+
+
 def _cap(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
@@ -75,8 +79,13 @@ def email_card(inc: Incoming, cfg: dict, now: datetime, use_ai: bool = True) -> 
     notes_raw = clean_body(inc.body)
     notes_raw, focus, want_full = parse_focus(notes_raw, cfg)
 
-    message = emailclean.clean_forwarded(inc.forwarded or "")
-    sentences = prepare(message)
+    # The WHOLE thread, newest message first (each with its own signature removed): the summary and the
+    # [focus] lookups can use what was said earlier in the conversation, not just the top message.
+    thread = emailclean.thread_messages(inc.forwarded or "")
+    message = "\n\n".join(m["text"] for m in thread)
+    sentences, owners = prepare_thread([m["text"] for m in thread])
+    log.info("Forward: your note %d chars; forwarded thread %d message(s), %d sentences%s", len(notes_raw), len(thread),
+             len(sentences), " (no forward marker found - split by a guess)" if inc.guessed_forward else "")
     sections: list[Section] = []
     card_notes: list[str] = []
 
@@ -88,17 +97,22 @@ def email_card(inc: Incoming, cfg: dict, now: datetime, use_ai: bool = True) -> 
         sections.append(Section("focus", label=f.upper()[:40], text=" ".join(found) if found else "Not mentioned in this email."))
 
     if want_full:
-        text = _cap(message, int(scfg.get("max_full_chars", 2500))) or "(The forwarded email had no readable text.)"
+        parts = []
+        for i, m in enumerate(thread):
+            who = ", ".join(x for x in (m.get("sender"), m.get("date")) if x)
+            parts.append(m["text"] if i == 0 else (f"EARLIER - {who}:\n" if who else "EARLIER:\n") + m["text"])
+        text = _cap("\n\n".join(parts), int(scfg.get("max_full_chars", 2500))) or "(The forwarded email had no readable text.)"
         sections.append(Section("full", text=text))
     else:
-        rest = [x for x in sentences if x not in shown]      # don't repeat what the focus answers already say
+        keep = [i for i, x in enumerate(sentences) if x not in shown]      # don't repeat what the focus answers already say
+        rest, rest_owners = [sentences[i] for i in keep], [owners[i] for i in keep]
         out = None
         if scfg.get("backend") == "ollama" and use_ai and rest:
             ctx = f"From: {_name_only(inc.fwd_from)}\nSubject: {inc.subject or inc.fwd_subject}" if inc.fwd_from else f"Subject: {inc.subject}"
-            out, info = llm.summarise(rest, n, cfg["llm"], ctx)
+            out, info = llm.summarise(rest, n, cfg["llm"], ctx, rest_owners)
             card_notes.append(f"AI summary ({info['seconds']}s)" if out else f"AI not used: {info['reason']}")
         if not out and rest:
-            out = [finish(rest[i]) for i in pick(rest, n)]
+            out = [finish(rest[i]) for i in pick(rest, n, owners=rest_owners)]
         if out:
             sections.append(Section("summary", text=" ".join(out)))
         elif not focus:
@@ -122,7 +136,7 @@ def email_card(inc: Incoming, cfg: dict, now: datetime, use_ai: bool = True) -> 
 
     subline = ""
     if scfg.get("show_original_sender", True) and inc.fwd_from:
-        subline = f"From {_name_only(inc.fwd_from)}"
+        subline = f"From {_name_only(inc.fwd_from)}" + (f" · {len(thread)} messages" if len(thread) > 1 else "")
     return Card(kind="email", heading=heading, subline=subline, sections=sections, icons=_dedupe(s_ids + lead_ids + body_ids),
                 source="email", created=now, notes=card_notes, vars={"date": now.strftime("%a %d %b")})
 

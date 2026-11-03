@@ -36,6 +36,7 @@ class Incoming:
     fwd_date: str = ""
     images: list[Image.Image] = field(default_factory=list)
     auth_ok: bool = True
+    guessed_forward: bool = False       # "Fwd:" subject but no forward marker: split note/forward by a guess
 
 
 class _HTMLText(HTMLParser):
@@ -90,9 +91,9 @@ def clean_subject(subject: str, strip_fwd: bool = False) -> str:
 
 
 _FWD_MARKERS = [
-    re.compile(r"^-{3,}\s*forwarded message\s*-{3,}\s*$", re.I | re.M),
-    re.compile(r"^begin forwarded message:?\s*$", re.I | re.M),
-    re.compile(r"^-{3,}\s*original message\s*-{3,}\s*$", re.I | re.M),
+    re.compile(r"^[>\s]*-{3,}\s*forwarded message\s*-{3,}\s*$", re.I | re.M),
+    re.compile(r"^[>\s]*begin forwarded message:?\s*$", re.I | re.M),
+    re.compile(r"^[>\s]*-{3,}\s*original message\s*-{3,}\s*$", re.I | re.M),
     re.compile(r"^_{10,}\s*\n(?=from:)", re.I | re.M),
 ]
 _HEADER_LINE = re.compile(r"^\s*(from|date|sent|subject|to|cc|reply-to)\s*:\s*(.*)$", re.I)
@@ -116,6 +117,10 @@ def split_forward(text: str) -> tuple[str, str | None, dict]:
         return text, None, {}
     above = text[:start].strip()
     rest = text[end:].lstrip("\n")
+    rest_lines = rest.split("\n")
+    nonempty = [l for l in rest_lines if l.strip()]
+    if nonempty and sum(l.lstrip().startswith(">") for l in nonempty) / len(nonempty) >= 0.6:
+        rest = "\n".join(re.sub(r"^\s*>\s?", "", l) for l in rest_lines)      # Apple Mail: whole forward is "> " quoted
     headers: dict = {}
     lines = rest.split("\n")
     i = 0
@@ -130,6 +135,14 @@ def split_forward(text: str) -> tuple[str, str | None, dict]:
         i += 1
     body = "\n".join(lines[i:]).strip()
     return above, body, headers
+
+
+def guess_forward(text: str) -> tuple[str, str]:
+    """No forward marker found.  A short first paragraph is probably your note; everything else is the forward."""
+    parts = re.split(r"\n\s*\n", text.strip(), maxsplit=1)
+    if len(parts) == 2 and len(parts[0].split()) <= 40:
+        return parts[0].strip(), parts[1].strip()
+    return "", text.strip()
 
 
 def _text_of(msg: email.message.EmailMessage) -> str:
@@ -204,6 +217,9 @@ def parse(raw: bytes, *, min_image_px: int = 150, max_images: int = 3) -> Incomi
         headers = {"from": str(attached_msg.get("From", "")),
                    "subject": str(attached_msg.get("Subject", "")),
                    "date": str(attached_msg.get("Date", ""))}
+    if fwd_body is None and is_fwd_subject and attached_msg is None and text.strip():
+        above, fwd_body = guess_forward(text)
+        inc.guessed_forward = True
     if fwd_body is not None or is_fwd_subject:
         inc.forwarded = fwd_body if fwd_body is not None else ""
         inc.body = above

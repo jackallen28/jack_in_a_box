@@ -102,19 +102,21 @@ def strip_signature(text: str) -> str:
     return "\n".join(lines[:end]).rstrip() if dropped_contact else "\n".join(lines).rstrip()
 
 
-def clean_forwarded(text: str, *, keep_thread: bool = False) -> str:
-    """Return just the message: no signature, disclaimer, older replies, link clutter or image placeholders."""
-    text = tidy_chars(text or "")
+def _unquote_if_quoted(text: str) -> str:
+    """Apple Mail and some others prefix a whole forwarded message with "> ": remove one level, keep the words."""
+    lines = text.split("\n")
+    nonempty = [l for l in lines if l.strip()]
+    if nonempty and sum(l.lstrip().startswith(">") for l in nonempty) / len(nonempty) >= 0.6:
+        return "\n".join(re.sub(r"^\s*>\s?", "", l) for l in lines)
+    return text
+
+
+def clean_message(text: str) -> str:
+    """One message of a thread: no signature, disclaimer, link clutter or image placeholders."""
+    text = _unquote_if_quoted(tidy_chars(text or ""))
     for rx in _IMG:
         text = rx.sub("", text)
     text = _BANNER.sub("", text)
-    if not keep_thread:
-        for rx in _THREAD:
-            m = rx.search(text)
-            if m and m.start() > 0:
-                text = text[:m.start()]
-            elif m and m.start() == 0 and rx is _THREAD[-1]:
-                text = rx.sub("", text)
     m = _DISCLAIMER.search(text)
     if m:
         text = text[:m.start()]
@@ -124,3 +126,110 @@ def clean_forwarded(text: str, *, keep_thread: bool = False) -> str:
     text = re.sub(r"[ \t]+\n", "\n", text)
     text = re.sub(r"(?<=\S)[ \t]{2,}", " ", text)
     return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+# ---------------------------------------------------------------- reply chains
+_WROTE_END = re.compile(r"wrote:\s*$", re.I)
+_HDR = re.compile(r"^\s*(from|sent|date|to|cc|subject)\s*:\s*(.*)$", re.I)
+
+
+def _on_wrote(lines: list[str], i: int) -> tuple[int, dict] | None:
+    """Gmail/Apple: 'On Fri, 30 Oct 2026 at 9:15 AM, Jack <j@x.com> wrote:' (may wrap onto the next line or two)."""
+    first = lines[i].strip()
+    if not re.match(r"^on\s", first, re.I):
+        return None
+    joined = first
+    for n in range(1, 4):
+        if _WROTE_END.search(joined):
+            body = re.sub(r"^on\s+", "", joined, flags=re.I)
+            body = _WROTE_END.sub("", body).strip().rstrip(",")
+            body = re.sub(r"\s*<[^>]*>", "", body)                 # drop <email@x.com>
+            sender = body.rsplit(",", 1)[-1].strip() if "," in body else body
+            date = body[: len(body) - len(sender)].strip(" ,") if "," in body else ""
+            return n, {"sender": sender, "date": date}
+        if i + n >= len(lines) or len(joined) > 300:
+            return None
+        joined = f"{joined} {lines[i + n].strip()}"
+    return None
+
+
+def _find_boundary(lines: list[str]):
+    """First place where an older message begins: (index, lines used, kind, header) or None."""
+    for i, line in enumerate(lines):
+        if re.match(r"^\s*-{2,}\s*(?:original message|forwarded message|reply message)\s*-{2,}\s*$", line, re.I):
+            return i, 1, "block", {}
+        if re.match(r"^\s*_{8,}\s*$", line) and i + 1 < len(lines) and re.match(r"^\s*from\s*:", lines[i + 1], re.I):
+            return i, 1, "block", {}
+        ow = _on_wrote(lines, i)
+        if ow:
+            return i, ow[0], "quoted", ow[1]
+        if re.match(r"^\s*from\s*:\s*\S", line, re.I) and any(re.match(r"^\s*(sent|date)\s*:", l, re.I) for l in lines[i + 1:i + 6]):
+            return i, 0, "block", {}
+    return None
+
+
+def _take_quoted(rest: list[str]) -> tuple[list[str], list[str]]:
+    """The '> ' block right after an 'On ... wrote:' line, one level removed, plus whatever follows it."""
+    quoted: list[str] = []
+    i = 0
+    while i < len(rest):
+        l = rest[i]
+        if l.lstrip().startswith(">"):
+            quoted.append(re.sub(r"^\s*>\s?", "", l))
+        elif not l.strip() and any(x.lstrip().startswith(">") for x in rest[i + 1:i + 3]):
+            quoted.append("")
+        else:
+            break
+        i += 1
+    return quoted, rest[i:]
+
+
+def thread_messages(text: str) -> list[dict]:
+    """Split a forwarded email into the messages of its reply chain, NEWEST FIRST.
+
+    Each item: {"sender", "date", "text"} with the text cleaned of signature/disclaimer/links/logo placeholders.
+    Handles Gmail/Apple "On ... wrote:" (> quoted), Outlook "From:/Sent:" blocks and "-----Original Message-----"."""
+    text = tidy_chars(text or "")
+    out: list[dict] = []
+
+    def walk(chunk: str, header: dict, depth: int) -> None:
+        lines = chunk.split("\n")
+        b = _find_boundary(lines) if depth < 10 else None
+        if b is None:
+            out.append({**header, "text": clean_message(chunk)})
+            return
+        idx, used, kind, hdr = b
+        head = "\n".join(lines[:idx])
+        rest = lines[idx + used:]
+        if kind == "quoted":
+            quoted, after = _take_quoted(rest)
+            if "".join(after).strip():                      # reply typed BELOW the quote belongs to the newer message
+                head += "\n" + "\n".join(after)
+            out.append({**header, "text": clean_message(head)})
+            walk("\n".join(quoted), hdr, depth + 1)
+        else:                                               # a header block, then the older message (not quoted)
+            while rest and not rest[0].strip():
+                rest = rest[1:]
+            info: dict = {}
+            while rest:
+                hm = _HDR.match(rest[0])
+                if hm:
+                    info[hm.group(1).lower()] = hm.group(2).strip()
+                elif not (info and rest[0][:1] in " \t" and rest[0].strip()):
+                    break
+                rest = rest[1:]
+            out.append({**header, "text": clean_message(head)})
+            sender = re.sub(r"\s*<[^>]*>", "", info.get("from", "")).strip()
+            walk("\n".join(rest), {"sender": sender, "date": info.get("sent") or info.get("date", "")}, depth + 1)
+
+    walk(text, {}, 0)
+    return [m for m in out if m["text"].strip()]
+
+
+def clean_forwarded(text: str, *, keep_thread: bool = False) -> str:
+    """The message with its signature, disclaimer, links and logo placeholders removed.
+    By default only the newest message; ``keep_thread=True`` returns the whole reply chain, newest first."""
+    msgs = thread_messages(text)
+    if not msgs:
+        return ""
+    return "\n\n".join(m["text"] for m in msgs) if keep_thread else msgs[0]["text"]

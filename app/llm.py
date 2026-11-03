@@ -93,10 +93,10 @@ def _parse(output: str, n: int) -> list[str]:
     return sents[:n]
 
 
-def excerpt(sentences: list[str], limit_chars: int) -> str:
+def excerpt(sentences: list[str], limit_chars: int, owners: list[int] | None = None) -> str:
     """The sentences worth showing the model: requests/deadlines first in rank, then in the order written."""
     from .summarise import pick
-    chosen = pick(sentences, min(len(sentences), 12), priority_first=False)
+    chosen = pick(sentences, min(len(sentences), 12), priority_first=False, owners=owners)
     out, used = [], 0
     for i in chosen:
         if used + len(sentences[i]) > limit_chars:
@@ -107,13 +107,13 @@ def excerpt(sentences: list[str], limit_chars: int) -> str:
 
 
 # --------------------------------------------------------------------------- the call
-def run(sentences: list[str], n: int, cfg: dict, context: str = "") -> tuple[list[str] | None, dict]:
+def run(sentences: list[str], n: int, cfg: dict, context: str = "", owners: list[int] | None = None) -> tuple[list[str] | None, dict]:
     """Ask the model.  Returns (summary or None, info) - info explains what happened (for logs and the Test button)."""
     info: dict = {"used_ai": False, "seconds": 0.0, "reason": ""}
     if not sentences:
         info["reason"] = "nothing to summarise"
         return None, info
-    text = excerpt(sentences, int(cfg.get("max_input_chars", 1600)))
+    text = excerpt(sentences, int(cfg.get("max_input_chars", 1600)), owners)
     head = f"{context.strip()}\n" if context.strip() else ""      # e.g. "From: Dave Smith / Subject: Invoice" (also allowed in the answer)
     payload = {
         "model": cfg.get("model", "qwen2.5:0.5b"), "stream": False,
@@ -152,8 +152,8 @@ def run(sentences: list[str], n: int, cfg: dict, context: str = "") -> tuple[lis
     return None, info
 
 
-def summarise(sentences: list[str], n: int, cfg: dict, context: str = "") -> tuple[list[str] | None, dict]:
-    return run(sentences, n, cfg, context)
+def summarise(sentences: list[str], n: int, cfg: dict, context: str = "", owners: list[int] | None = None) -> tuple[list[str] | None, dict]:
+    return run(sentences, n, cfg, context, owners)
 
 
 # --------------------------------------------------------------------------- status / test (for the settings page)

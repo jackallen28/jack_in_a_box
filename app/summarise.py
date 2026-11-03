@@ -79,15 +79,26 @@ def _words(s: str) -> list[str]:
 
 def prepare(text: str) -> list[str]:
     """Clean, de-duplicated sentences of the message (for summarising and for [focus] lookups)."""
-    uniq: list[str] = []
+    return prepare_thread([text])[0]
+
+
+def prepare_thread(texts: list[str]) -> tuple[list[str], list[int]]:
+    """Sentences of a whole reply chain (newest message first) plus which message each came from (0 = newest).
+
+    Quoted history repeats earlier text, so a sentence that near-duplicates an earlier one is dropped; the newest
+    wording wins."""
+    sents: list[str] = []
+    owners: list[int] = []
     seen: list[set] = []
-    for s in _prepare(text):
-        ws = set(_words(s))
-        if any(ws and len(ws & o) / len(ws | o) > 0.7 for o in seen):
-            continue
-        uniq.append(s)
-        seen.append(ws)
-    return uniq
+    for mi, text in enumerate(texts):
+        for s in _prepare(text):
+            ws = set(_words(s))
+            if any(ws and len(ws & o) / len(ws | o) > 0.7 for o in seen):
+                continue
+            sents.append(s)
+            owners.append(mi)
+            seen.append(ws)
+    return sents, owners
 
 
 def rank(sents: list[str]) -> list[float]:
@@ -107,13 +118,25 @@ def rank(sents: list[str]) -> list[float]:
     return scores
 
 
-def pick(sents: list[str], n: int, priority_first: bool = True) -> list[int]:
-    """Indexes of the n sentences to keep.  Up to two request/deadline sentences are always kept and lead."""
+def pick(sents: list[str], n: int, priority_first: bool = True, owners: list[int] | None = None) -> list[int]:
+    """Indexes of the n sentences to keep.
+
+    Up to two request/deadline sentences are always kept and lead.  For a reply chain (``owners`` = which message
+    each sentence came from) the opening message of the conversation also gets a place, so the overview says what
+    it is about as well as where it stands now."""
     if len(sents) <= n:
         return list(range(len(sents)))
     scores = rank(sents)
     prio = sorted((i for i in range(len(sents)) if action_score(sents[i]) >= 1.0), key=lambda i: -scores[i])[: min(2, max(1, n - 1))]
     rest = sorted((i for i in range(len(sents)) if i not in prio), key=lambda i: -scores[i])[: n - len(prio)]
+    if owners and len(set(owners)) > 1:
+        # the sentence where the conversation began (its first one that states something concrete)
+        oldest = max(owners)
+        opener = [i for i in range(len(sents)) if owners[i] == oldest]
+        origin = next((i for i in opener if re.search(r"\d|\$", sents[i]) or action_score(sents[i]) > 0), opener[0])
+        if origin not in prio + rest and rest:
+            rest.remove(min(rest, key=lambda i: scores[i]))
+            rest.append(origin)
     return sorted(prio) + sorted(rest) if priority_first else sorted(prio + rest)
 
 
