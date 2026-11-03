@@ -14,6 +14,7 @@ from app.config import normalise  # noqa: E402
 from app.emailclean import clean_forwarded, thread_messages  # noqa: E402
 from app.mailparse import parse  # noqa: E402
 from app.pipeline import build_cards  # noqa: E402
+from app.summarise import similar  # noqa: E402
 
 CFG = normalise({})
 
@@ -115,7 +116,7 @@ def test_reply_chain_summary_uses_the_whole_conversation():
     assert "we paid invoice 4471" in summary.lower()                            # the middle of the conversation
     assert "Accounts Manager" not in summary and "02 9999" not in summary   # signatures stay out, in every message
     assert c.subline == "From Dave Smith · 3 messages"
-    assert section(c, "actions").items == ["Chase Dave"]
+    assert section(c, "actions").items[0] == "Chase Dave"
 
 
 def test_apple_mail_quoted_forward_is_summarised_not_lost():
@@ -123,7 +124,7 @@ def test_apple_mail_quoted_forward_is_summarised_not_lost():
     summary = summary_text(c)
     assert "$12,480" in summary and "20 days overdue" in summary and "bank details" in summary
     assert "no readable text" not in summary
-    assert section(c, "actions").items == ["Chase Dave about the invoice"]      # your note stays an action
+    assert section(c, "actions").items[0] == "Chase Dave about the invoice"      # your note stays an action (first)
     assert c.subline == "From Dave Smith" and c.heading == "Invoice 4471 overdue"
 
 
@@ -131,7 +132,7 @@ def test_forward_with_no_recognisable_marker_is_still_split_into_note_and_email(
     ib = parse(mail("Fwd: Invoice", NO_MARKER))
     assert ib.guessed_forward and ib.body == "see below" and "invoice 4471" in ib.forwarded
     c = card("Fwd: Invoice", NO_MARKER)
-    assert section(c, "actions").items == ["See below"]                         # NOT the whole email as a to-do list
+    assert section(c, "actions").items[0] == "See below" and len(section(c, "actions").items) <= 3      # NOT the whole email as a to-do list
     assert "$12,480" in summary_text(c)
 
 
@@ -203,3 +204,17 @@ def test_focus_can_find_answers_in_earlier_messages():
     texts = {s.label: s.text for s in c.sections if s.key == "focus"}
     assert "$12,480" in texts["HOW MUCH WAS THE INVOICE"]
     assert "we paid invoice 4471" in texts["PAID"]
+
+
+def test_summary_and_actions_never_repeat_each_other():
+    for subject, body in (("Fwd: Re: Invoice 4471", GMAIL_CHAIN), ("Fwd: see below", NO_MARKER)):
+        c = card(subject, body)
+        overview = section(c, "summary").items if section(c, "summary") else []
+        actions = section(c, "actions").items
+        assert not any(x.startswith("[ ] ") for x in overview)                                   # the overview has no to-dos
+        everything = [*overview, *actions]
+        for i, a in enumerate(everything):
+            for b in everything[i + 1:]:
+                assert not similar(a, b), (a, b)                                               # nothing printed twice
+        assert any("Friday" in a for a in actions)                                               # the email's own request is an action
+        assert not any("Friday" in x for x in overview)

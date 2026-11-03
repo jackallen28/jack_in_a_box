@@ -105,3 +105,6 @@ details > .in { padding: 4px 12px 0; }
 .chips { display: flex; flex-wrap: wrap; gap: 4px; justify-content: center; }
 .chip { font: .72rem ui-monospace, Menlo, monospace; background: var(--card); border: 1px solid var(--line); border-radius: 99px; padding: 1px 7px; }
 .pad { width: min(320px, 100%); aspect-ratio: 1; background: #fff; border: 2px dashed var(--line); border-radius: 10px; touch-action: none; cursor: crosshair; display: block; }
+
+.badge.scheduled { color: var(--accent); border-color: var(--accent); border-style: dashed; }
+.when { font-size: .8rem; font-weight: 600; color: var(--accent); }

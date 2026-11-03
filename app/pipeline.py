@@ -14,7 +14,7 @@ from .models import Card, Section
 from . import emailclean
 from .focus import detect_image_request, find_focus, parse_focus
 from .summarise import bullets as extractive_bullets
-from .summarise import finish, prepare_thread
+from .summarise import finish, overview_and_actions, prepare_thread
 from .textproc import _dedupe, build_items, clean_body, fix_text, pop_leading_tags, sort_items, split_blocks
 
 
@@ -135,10 +135,7 @@ def email_card(inc: Incoming, cfg: dict, now: datetime, use_ai: bool = True) -> 
         ctx = f"From: {_name_only(inc.fwd_from)}\nSubject: {inc.subject or inc.fwd_subject}" if inc.fwd_from else f"Subject: {inc.subject}"
         out, notes, _ = summarise_thread(thread, ctx, cfg, n, use_ai, shown)
         card_notes += notes
-        if out:
-            sections.append(Section("summary", items=out, bullets=True))
-        elif not focus:
-            sections.append(Section("summary", text="(The forwarded email had no readable text.)"))
+        summary_out = out
 
     images = []
     if want_images:
@@ -157,6 +154,14 @@ def email_card(inc: Incoming, cfg: dict, now: datetime, use_ai: bool = True) -> 
             t = fix_text(line, cfg, is_task=True)
             if t:
                 actions.append(t)
+    if not want_full:
+        # SUMMARY = overview facts only; ACTIONS = everything to do (yours first, then the email's). Never the same thing twice.
+        focus_text = [x for sec in sections if sec.key == "focus" for x in [sec.text]]
+        overview, actions = overview_and_actions(summary_out, actions, focus_text)
+        if overview:
+            sections.insert(len([x for x in sections if x.key == "focus"]), Section("summary", items=overview, bullets=True))
+        elif not focus and not actions:
+            sections.append(Section("summary", text="(The forwarded email had no readable text.)"))
     actions = actions[: int(scfg.get("max_actions", 10))]
     if actions:
         sections.append(Section("actions", items=actions))

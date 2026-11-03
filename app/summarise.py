@@ -221,3 +221,59 @@ def bullets(sents: list[str], n: int, owners: list[int] | None = None) -> list[s
         seen.add(key)
         (acts if b.startswith("[ ] ") else info).append(b)
     return info + acts
+
+
+# --------------------------------------------------------------------------- SUMMARY (overview) vs ACTIONS (to-dos): no double-ups
+_STOP = set("the a an and or but of to for in on at by with from is are was were be been it its this that these those you your we our they their "
+            "i me my will would can could should may might has have had do does did not no so as if then than also please just about into over "
+            "up out any all some more".split())
+_IMPERATIVE = re.compile(
+    r"^(?:please|kindly|don't forget|remember to|make sure|reply|respond|confirm|submit|return|send|pay|sign|bring|complete|approve|review|"
+    r"register|call|phone|ring|contact|book|apply|attend|arrange|ensure|fill|download|upload|renew|check|email|forward|pack|collect|pick up|"
+    r"organise|organize|follow up|chase|remind|let (?:me|us|\w+) know)\b", re.I)
+
+
+def _words(text: str) -> set[str]:
+    out = set()
+    for w in re.findall(r"[a-z0-9$%]+", text.lower().replace(",", "")):
+        w = w[:-1] if len(w) > 4 and w.endswith("s") else w
+        if w not in _STOP and (len(w) > 2 or w.isdigit()):
+            out.add(w)
+    return out
+
+
+def similar(a: str, b: str) -> bool:
+    """Do two lines say (nearly) the same thing?  Compared by their meaningful words, ignoring a leading tick-box."""
+    a, b = re.sub(r"^\[ \]\s*", "", a), re.sub(r"^\[ \]\s*", "", b)
+    wa, wb = _words(a), _words(b)
+    if not wa or not wb:
+        return a.strip().lower().rstrip(".") == b.strip().lower().rstrip(".")
+    shared = len(wa & wb)
+    return shared >= 2 and shared / min(len(wa), len(wb)) >= 0.6 or (min(len(wa), len(wb)) == 1 and shared == 1 and max(len(wa), len(wb)) <= 2)
+
+
+def overview_and_actions(bullets: list[str], your_actions: list[str], also_shown: list[str] = ()) -> tuple[list[str], list[str]]:
+    """Split the summary's bullets into the OVERVIEW (facts) and the ACTIONS (things to do), with no overlap:
+
+    * every to-do - ticked by the summary, or phrased as an instruction - moves to ACTIONS, after the ones you wrote yourself
+    * an action that repeats one already listed (yours or another) is dropped
+    * an overview line that merely restates an action, a [focus] answer, or an earlier overview line is dropped
+    """
+    info, acts = [], list(your_actions)
+    for b in bullets:
+        if b.startswith("[ ] "):
+            t = b[4:]
+        elif _IMPERATIVE.match(b):
+            t = b.rstrip(".")
+        else:
+            info.append(b)
+            continue
+        t = _cap_first(re.sub(r"^(?:please|kindly)\s+", "", t, flags=re.I)).strip()
+        if t and not any(similar(t, x) for x in acts):
+            acts.append(t)
+    keep: list[str] = []
+    for b in info:
+        if any(similar(b, x) for x in [*acts, *also_shown, *keep]):
+            continue
+        keep.append(b)
+    return keep, acts

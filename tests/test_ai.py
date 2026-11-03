@@ -12,7 +12,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from test_core import mk, summary_text  # noqa: E402
+from test_core import all_text, mk, summary_text  # noqa: E402
 from app import llm  # noqa: E402
 from app.config import normalise  # noqa: E402
 from app.emailclean import clean_forwarded  # noqa: E402
@@ -148,7 +148,7 @@ def test_summary_does_not_repeat_what_the_focus_blocks_already_say():
 
 def test_no_empty_summary_when_the_focus_answers_cover_everything():
     (card,), _ = build_cards(fwd("[parking]", "Please send the signed form by Monday."), CFG)
-    assert [s.key for s in card.sections] == ["focus"] or "summary" in [s.key for s in card.sections]
+    assert [s.key for s in card.sections] in (["focus"], ["focus", "actions"])         # the email's own request is an action, not a summary
     (card,), _ = build_cards(fwd("[signed form]", "Please send the signed form by Monday."), CFG)
     assert [s.key for s in card.sections] == ["focus"]                              # nothing left over to summarise
 
@@ -230,7 +230,10 @@ def test_ai_summary_is_used_when_it_sticks_to_the_email(ollama):
     fake.reply = {"message": {"content": "**Summary:**\n- " + GOOD.replace(". ", ".\n- ")}}
     (card,), _ = build_cards(fwd(""), cfg)
     s = summary_text(card)
-    assert s.startswith("Please let me know by Friday") and "**" not in s and "- " not in s
+    acts = next(x for x in card.sections if x.key == "actions").items
+    assert s.startswith("Invoice 4471") and "**" not in s and "- " not in s            # overview = facts
+    assert acts == ["Let me know by Friday so Dave can close the quarter."] or any("by Friday" in a for a in acts)      # to-do = ACTIONS
+    assert "by Friday" not in s
     assert card.notes and card.notes[0].startswith("AI summary")
     req = fake.seen[0]
     assert req["keep_alive"] == 0 and req["options"]["num_ctx"] == 2048 and req["model"] == "qwen2.5:0.5b" and req["stream"] is False
@@ -262,14 +265,14 @@ def test_ai_that_makes_things_up_is_rejected_and_builtin_summary_used(ollama, li
     (card,), _ = build_cards(fwd(""), cfg)
     assert card.notes and card.notes[0].startswith("AI not used")
     s = summary_text(card)
-    assert "by Friday" in s and "99,999" not in s and "5555" not in s and "Gerald" not in s and "Zebra" not in s
+    assert "by Friday" in all_text(card) and "99,999" not in s and "5555" not in s and "Gerald" not in s and "Zebra" not in s
 
 
 def test_ai_failures_fall_back_without_losing_the_print(ollama):
     cfg, fake = ollama
     fake.status = 404
     (card,), _ = build_cards(fwd(""), cfg)
-    assert "ollama pull" in card.notes[0] and "by Friday" in summary_text(card)
+    assert "ollama pull" in card.notes[0] and "by Friday" in all_text(card)
     cfg["llm"]["url"] = "http://127.0.0.1:1"                                    # nothing listening
     t = time.time()
     (card,), _ = build_cards(fwd(""), cfg)

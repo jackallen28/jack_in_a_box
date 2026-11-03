@@ -10,9 +10,10 @@ CREATE TABLE IF NOT EXISTS jobs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     created TEXT NOT NULL,
     kind TEXT, source TEXT, title TEXT, notes TEXT,
-    status TEXT NOT NULL DEFAULT 'pending',      -- pending | printed | failed
+    status TEXT NOT NULL DEFAULT 'pending',      -- pending | scheduled | held | printed | failed
     attempts INTEGER NOT NULL DEFAULT 0,
-    error TEXT, printed_at TEXT, last_try TEXT, png TEXT
+    error TEXT, printed_at TEXT, last_try TEXT, png TEXT,
+    due TEXT                                     -- scheduled jobs: when to print (UTC ISO); status 'scheduled' until then
 );
 CREATE INDEX IF NOT EXISTS jobs_status ON jobs(status, id);
 CREATE TABLE IF NOT EXISTS seen (
@@ -40,6 +41,8 @@ class DB:
         self.lock = threading.RLock()
         with self.lock:
             self.conn.executescript(SCHEMA)
+            if "due" not in {r["name"] for r in self.conn.execute("PRAGMA table_info(jobs)")}:      # databases from older versions
+                self.conn.execute("ALTER TABLE jobs ADD COLUMN due TEXT")
             self.conn.commit()
 
     def execute(self, sql: str, args=()) -> sqlite3.Cursor:

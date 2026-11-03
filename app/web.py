@@ -22,7 +22,7 @@ from . import icons as icon_lib, llm, plugins, schema, sheet as sheet_mod
 from .config import APP_DIR, DATA_DIR, ROOT, KIND_DEFAULTS, ConfigStore, default_template, merge
 from .mailbox import MailPoller
 from .mailparse import Incoming, _load_image, parse
-from .pipeline import build_cards, classify_sender, local_now, plain_card
+from .pipeline import build_cards, classify_sender, local_now, local_tz, plain_card
 from .render import FONTS, UPLOAD_DIR, render_card
 from .samples import sample_card, sample_image
 from .service import LOGBUF, Service
@@ -246,8 +246,11 @@ def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button, 
 
     @app.get("/api/history")
     def history():
-        rows = svc.db.all("SELECT id, created, kind, source, title, status, attempts, error, notes FROM jobs "
+        rows = svc.db.all("SELECT id, created, kind, source, title, status, attempts, error, notes, due FROM jobs "
                           "ORDER BY id DESC LIMIT ?", (min(200, int(request.args.get("limit", 40))),))
+        tz = local_tz(cfg.data)
+        for r in rows:                                   # scheduled printouts: when they are expected to print, in your timezone
+            r["due_text"] = datetime.fromisoformat(r["due"]).astimezone(tz).strftime("%a %d %b %H:%M") if r["due"] and r["status"] == "scheduled" else ""
         return jsonify(rows)
 
     @app.get("/history/<int:jid>.png")
@@ -264,7 +267,7 @@ def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button, 
 
     @app.post("/api/history/<int:jid>/cancel")
     def cancel(jid):
-        svc.db.execute("UPDATE jobs SET status='failed', error='Cancelled' WHERE id=? AND status IN ('pending','held')", (jid,))
+        svc.db.execute("UPDATE jobs SET status='failed', error='Cancelled' WHERE id=? AND status IN ('pending','held','scheduled')", (jid,))
         return jsonify(ok=True)
 
     @app.post("/api/history/<int:jid>/release")

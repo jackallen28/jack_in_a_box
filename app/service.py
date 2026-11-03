@@ -7,7 +7,7 @@ import threading
 import time
 import urllib.request
 from collections import deque
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from PIL import Image
@@ -53,22 +53,27 @@ class Service:
         name = card.template or card.kind
         return render_card(card, c["templates"].get(name) or c["templates"]["reminder"], c["printer"], c["icons"])
 
-    def submit(self, card: Card, copies: int = 1, hold: bool = False) -> list[int]:
+    def submit(self, card: Card, copies: int = 1, hold: bool = False, due: datetime | None = None) -> list[int]:
+        """Queue a printout.  ``hold`` waits for the button; ``due`` (a timezone-aware time in the future) waits until then.
+        Either way it is in the queue straight away, so you can see it, cancel it, or press Print now."""
         self.touch()
+        later = due is not None and due > datetime.now(timezone.utc)
+        status = "held" if hold else "scheduled" if later else "pending"
         img = self.render(card)
         ids = []
         for _ in range(max(1, copies)):
             now = datetime.now()
             cur = self.db.execute(
-                "INSERT INTO jobs(created, kind, source, title, notes, status) VALUES (?,?,?,?,?,?)",
+                "INSERT INTO jobs(created, kind, source, title, notes, status, due) VALUES (?,?,?,?,?,?,?)",
                 (now.isoformat(timespec="seconds"), card.kind, card.source,
-                 (card.heading or card.summary())[:120], json.dumps(card.notes), "held" if hold else "pending"))
+                 (card.heading or card.summary())[:120], json.dumps(card.notes), status,
+                 due.astimezone(timezone.utc).isoformat(timespec="seconds") if later else None))
             jid = cur.lastrowid
             path = self.hist_dir / f"{jid}.png"
             img.save(path)
             self.db.execute("UPDATE jobs SET png=? WHERE id=?", (path.name, jid))
             ids.append(jid)
-        log.info("%s %s '%s'%s", "Holding for button:" if hold else "Queued", card.kind,
+        log.info("%s %s '%s'%s", "Holding for button:" if hold else (f"Scheduled for {due.astimezone():%a %d %b %H:%M}:" if later else "Queued"), card.kind,
                  (card.heading or card.summary())[:50], f" x{copies}" if copies > 1 else "")
         self.wake.set()
         return ids
@@ -87,8 +92,25 @@ class Service:
             self.wake.set()
         return n
 
+    def promote_due(self, now: datetime | None = None) -> int:
+        """Scheduled printouts whose time has come join the print queue."""
+        now = now or datetime.now(timezone.utc)
+        n = 0
+        for j in self.db.all("SELECT id, due FROM jobs WHERE status='scheduled'"):
+            try:
+                due = datetime.fromisoformat(j["due"])
+            except (TypeError, ValueError):
+                due = now                                   # no readable time: don't leave it stuck
+            if due <= now:
+                n += self.db.execute("UPDATE jobs SET status='pending' WHERE id=? AND status='scheduled'", (j["id"],)).rowcount
+        if n:
+            log.info("%d scheduled printout(s) are due", n)
+            self.wake.set()
+        return n
+
     def release_one(self, job_id: int) -> bool:
-        cur = self.db.execute("UPDATE jobs SET status='pending' WHERE id=? AND status='held'", (job_id,))
+        """Print this one now (a message waiting for the button, or a scheduled printout)."""
+        cur = self.db.execute("UPDATE jobs SET status='pending' WHERE id=? AND status IN ('held','scheduled')", (job_id,))
         self.wake.set()
         return cur.rowcount > 0
 
@@ -143,6 +165,7 @@ class Service:
             self.wake.clear()
 
     def process_pending(self) -> None:
+        self.promote_due()
         pc = self.cfg.data["printer"]
         retry = timedelta(seconds=max(5, int(pc.get("retry_seconds", 30))))
         for job in self.db.all("SELECT * FROM jobs WHERE status='pending' ORDER BY id"):
@@ -200,11 +223,11 @@ class Service:
     def cleanup(self) -> None:
         keep = int(self.cfg.data["general"].get("history_keep_days", 60))
         cutoff = (datetime.now() - timedelta(days=keep)).isoformat(timespec="seconds")
-        for row in self.db.all("SELECT id, png FROM jobs WHERE created<? AND status!='pending'", (cutoff,)):
+        for row in self.db.all("SELECT id, png FROM jobs WHERE created<? AND status NOT IN ('pending','scheduled','held')", (cutoff,)):
             still = self.db.one("SELECT COUNT(*) n FROM jobs WHERE png=? AND id!=?", (row["png"], row["id"]))
             if row["png"] and still["n"] == 0:
                 (self.hist_dir / row["png"]).unlink(missing_ok=True)
-        self.db.execute("DELETE FROM jobs WHERE created<? AND status!='pending'", (cutoff,))
+        self.db.execute("DELETE FROM jobs WHERE created<? AND status NOT IN ('pending','scheduled','held')", (cutoff,))
         self.db.execute("DELETE FROM seen WHERE ts<?", (cutoff,))
         self.db.execute("DELETE FROM sheet_rows WHERE first_seen<? AND status IN ('deleted','ignored','empty')", (cutoff,))
         self.db.execute("DELETE FROM cal_events WHERE first_seen<? AND status!='pending'", (cutoff,))
@@ -212,5 +235,6 @@ class Service:
     # ---------------------------------------------------------------- status
     def status(self) -> dict:
         n = self.db.one("SELECT COUNT(*) n FROM jobs WHERE status='pending'")["n"]
-        return {"queued": n, "held": self.held_count(), "printer_error": self.printer_error, "last_print": self.last_print,
+        sched = self.db.all("SELECT due FROM jobs WHERE status='scheduled' ORDER BY due")
+        return {"queued": n, "held": self.held_count(), "scheduled": len(sched), "next_due": sched[0]["due"] if sched else None, "printer_error": self.printer_error, "last_print": self.last_print,
                 "printed_last_hour": self._printed_last_hour()}

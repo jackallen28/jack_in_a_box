@@ -232,7 +232,6 @@ class SheetPoller(threading.Thread):
         self.kick = threading.Event()
         self.status = {"state": "disabled", "last_check": "", "error": "", "processed": 0, "waiting": 0,
                        "scheduled": 0, "next_scheduled": ""}
-        self._next_due: datetime | None = None                   # the earliest scheduled row, so it prints on time
         self._last_poll = 0.0
         self._err_logged = False
 
@@ -242,8 +241,7 @@ class SheetPoller(threading.Thread):
             sc = self.cfg.data["sheet"]
             if sc.get("enabled") and sc.get("url") and sc.get("token"):
                 try:
-                    due_now = self._next_due is not None and datetime.now(self._next_due.tzinfo) >= self._next_due
-                    if self.kick.is_set() or due_now or time.time() - self._last_poll >= max(15, int(sc.get("poll_seconds", 60))):
+                    if self.kick.is_set() or time.time() - self._last_poll >= max(15, int(sc.get("poll_seconds", 60))):
                         self._last_poll = time.time()
                         self.poll_once()
                     else:
@@ -275,7 +273,6 @@ class SheetPoller(threading.Thread):
         cols = detect_columns(data.get("headers", []))
         done = 0
         waiting = 0
-        scheduled: list[datetime] = []
         tzname = data.get("timezone", "")
         outdated = bool((cols["sched_date"] or cols["sched_time"]) and not tzname)
         self.status["warning"] = OUTDATED if outdated else ""
@@ -288,21 +285,24 @@ class SheetPoller(threading.Thread):
                 due, snote = schedule_due(row.get("values", {}), cols, c, tzname)
                 if cols["sched_date"] or cols["sched_time"]:
                     log.info("Form row schedule: %s", describe(row.get("values", {}), cols, c, tzname))
-                if due is not None and due > datetime.now(due.tzinfo):
-                    scheduled.append(due)                    # not yet: stays in the sheet and is looked at again every poll
-                    continue
-                self.process_row(rid, row.get("values", {}), cols, (due, snote))
+                self.process_row(rid, row.get("values", {}), cols, (due, snote))       # into the queue now, stamped with its print time
                 done += 1
             except SheetError:
                 raise
             except Exception as e:                           # a bad row must not block the rows behind it
                 log.exception("Couldn't print a sheet row")
                 self._record(rid, "error", [], f"{type(e).__name__}: {e}")
-        self._next_due = min(scheduled) if scheduled else None
-        self.status.update(waiting=waiting + done, scheduled=len(scheduled), last_check=datetime.now().strftime("%d %b %H:%M:%S"),
-                           next_scheduled=self._next_due.strftime("%a %d %b %H:%M") if self._next_due else "")
+        self.status.update(waiting=waiting + done, last_check=datetime.now().strftime("%d %b %H:%M:%S"))
+        self._schedule_status()
         self.reap()
         return done
+
+    def _schedule_status(self) -> None:
+        st = self.svc.status()
+        nxt = ""
+        if st["next_due"]:
+            nxt = datetime.fromisoformat(st["next_due"]).astimezone(local_tz(self.cfg.data)).strftime("%a %d %b %H:%M")
+        self.status.update(scheduled=st["scheduled"], next_scheduled=nxt)
 
     def _record(self, rid: str, status: str, jobs: list[int], note: str = "") -> None:
         self.svc.db.execute("INSERT OR REPLACE INTO sheet_rows(id, first_seen, status, jobs, note) VALUES (?,?,?,?,?)",
@@ -314,7 +314,7 @@ class SheetPoller(threading.Thread):
         g = lambda role: (values.get(cols[role]) or "").strip() if cols.get(role) else ""
         self.svc.touch()
         notes: list[str] = [snote] if snote else []
-        if due is not None:
+        if due is not None and due > datetime.now(due.tzinfo):
             notes.append("scheduled for " + due.strftime("%a %d %b %H:%M"))
         email = g("email").lower()
         kind = "message" if re.search("message", g("type"), re.I) else "reminder"
@@ -372,9 +372,10 @@ class SheetPoller(threading.Thread):
             card.source = "form"
             card.icons = _dedupe(sym_ids + card.icons)
             card.notes = [*card.notes, *notes]
-            job_ids += self.svc.submit(card, copies, hold=hold)
+            job_ids += self.svc.submit(card, copies, hold=hold, due=due)
         self._record(rid, "queued" if job_ids else "empty", job_ids, "; ".join(notes))
-        log.info("Form row -> %d printout(s)%s%s", len(job_ids), " (held for the button)" if hold and job_ids else "",
+        log.info("Form row -> %d printout(s)%s%s%s", len(job_ids), " (held for the button)" if hold and job_ids else "",
+                 f" (scheduled for {due:%a %d %b %H:%M})" if job_ids and due is not None and due > datetime.now(due.tzinfo) else "",
                  f" [{'; '.join(notes)}]" if notes else "")
 
     # ------------------------------------------------------------- tidy up the sheet
@@ -390,7 +391,7 @@ class SheetPoller(threading.Thread):
             if not ids:
                 continue
             jobs = self.svc.db.all(f"SELECT status, error FROM jobs WHERE id IN ({','.join('?' * len(ids))})", ids)
-            if any(j["status"] in ("pending", "held") for j in jobs):
+            if any(j["status"] in ("pending", "held", "scheduled") for j in jobs):
                 continue                                              # still waiting (printer off / button not pressed)
             bad = [j for j in jobs if j["status"] == "failed" and (j["error"] or "") not in ("Cancelled", "Discarded")]
             if bad:
@@ -408,4 +409,5 @@ class SheetPoller(threading.Thread):
         if removed:
             log.info("Removed %d printed row(s) from the Google Sheet", removed)
         self.status["processed"] += removed
+        self._schedule_status()
         return removed

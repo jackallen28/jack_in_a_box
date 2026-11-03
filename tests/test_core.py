@@ -41,6 +41,11 @@ def summary_text(card):
     return sec.text or "\n".join(sec.items)
 
 
+def all_text(card):
+    """Everything printed in the card's sections (summary, actions, answers) as one string."""
+    return "\n".join(x for sec in card.sections for x in [sec.text, *sec.items])
+
+
 def mk(subject="", body="", sender="Me <me@example.com>", images=(), mid="<1@x>"):
     m = EmailMessage()
     m["From"], m["To"], m["Message-ID"] = sender, "printer@gmail.com", mid
@@ -189,9 +194,11 @@ def test_forward_summary_and_actions(env):
     (card,), _ = build_cards(inc, cfg.data)
     assert card.kind == "email" and card.heading == "Q4 supplier invoice dispute"
     sec = next(s for s in card.sections if s.key == "summary")
-    assert sec.bullets and 2 <= len(sec.items) <= 5 and "4471" in summary_text(card)
+    assert sec.bullets and 2 <= len(sec.items) + len(next(s for s in card.sections if s.key == "actions").items) <= 8 and "4471" in all_text(card)
+    assert not any(x.startswith("[ ] ") for x in sec.items)             # the overview holds no to-dos
     actions = next(s for s in card.sections if s.key == "actions").items
-    assert actions == ["Reply to Dave by Friday", "Check invoice 4471"]
+    assert actions[:2] == ["Reply to Dave by Friday", "Check invoice 4471"]                  # your own notes first, then the email's requests
+    assert len(actions) <= 4
     assert card.subline == "From Dave Smith"
 
 

@@ -205,10 +205,12 @@ How a row prints:
   and waits for the button unless you ticked *Skip the queue*, and anyone else follows the *not on your lists* setting (hold / print / ignore).
 * **Schedule Send.** Fill in the two optional questions to print later. Both blank = print straight away. **Date + time** = print at that moment (a moment that has
   already passed, or is right now, prints straight away). **Time only** = that time on the day the form was sent. **Date only** = that morning at the calendar print time
-  (7:00 by default); today's date alone prints now. The row stays safely in the Google Sheet until it has printed, so a power cut or reboot loses nothing, and the
-  Pi wakes itself at the due time (within about 10 seconds). Times are read in the spreadsheet's own timezone, so set that to yours (Sheet -> File -> Settings).
-  The Google Form tab shows how many are waiting and when the next one prints; **Test connection** also lists how each waiting row's schedule was read
-  ("prints Thu 05 Nov 17:30") and warns if the script in your sheet is out of date. If times come out wrong, set *Timezone of the Schedule Send answers*. Scheduled printouts say "scheduled for ..." in the history notes.
+  (7:00 by default); today's date alone prints now.
+  **The moment the box sees the row it goes into the queue**, already drawn and stamped *"Prints Thu 05 Nov 17:30"*. It shows on the home page's list (dashed
+  "scheduled" badge) and on the Google Form tab under *Waiting in the queue*, each with **Print now** and **Cancel** buttons. At the due time it joins the print queue by itself,
+  and it still waits for the printer if that's off. The Google Sheet row is only deleted after it has printed. Times are read in the spreadsheet's timezone
+  (File -> Settings in the sheet; or set *Timezone of the Schedule Send answers*). Scheduled printouts say "scheduled for ..." in the history notes.
+  **Test connection** lists how each waiting row's schedule was read ("prints Thu 05 Nov 17:30") and warns if the script in your sheet is out of date.
   **Updating an existing setup needs the new script:** open the tab, *Show my script*, paste it over the old one in Apps Script, Save, then
   *Deploy -> Manage deployments -> pencil -> Version: New version -> Deploy*. The Web app URL and secret code don't change.
 * A bad or empty row never blocks the ones behind it; a row that couldn't print is left in the sheet for you to see.
@@ -251,20 +253,20 @@ REPLY BY FRIDAY            <- each [focus] you typed, with the sentence(s) from 
 Please let me know by Friday so we can close the quarter.
 PAPER DUE MONDAY
 The Year 9 science paper is due Monday 9 November.
-SUMMARY                    <- the WHOLE email and its history as a few bullets (never repeats what's above)
+SUMMARY                    <- an OVERVIEW of the WHOLE email and its history, as facts only (never repeats what's above)
   • Dave Smith says invoice 4471 ($12,480) is 20 days overdue.
   • Jack replied that it was paid on Tuesday.
-  [ ] Reply to Dave by Friday
-ACTIONS                    <- your own notes, as a tick-box list
+ACTIONS                    <- everything to DO: your own notes first, then what the email asks of you
 [ ] Ring Dave about the credit
+[ ] Reply to Dave by Friday
 ```
 * **`[reply by friday]`, `[paper due monday]`, `[cost]`, `[bank details]` ...** anything in square brackets that isn't a symbol is a
   *question*. The box finds the sentences that best match it (words and sense: *reply* also finds "let me know", "get back to", "respond";
   *cost* finds dollar amounts). It only ever quotes the email, and if it isn't mentioned it prints **"Not mentioned in this email."** so
   you know it wasn't missed. `[actions]` and `[deadlines]` pull out the two strongest requests / dates.
 * **The summary is bullets, not quoted sentences.** The box reads the whole forward, every message in the conversation, newest first, and
-  writes a few short bullets: what it is about, the important facts (amounts, dates, places), and a tick-box line for each thing you or
-  someone needs to *do*, with its deadline. It never prints "no action needed" or "no need to reply": you decide that when you read it.
+  writes a few short bullets of *overview*: what it is about and the important facts (amounts, dates, places). Anything that has to be *done* (with its deadline)
+  goes under **ACTIONS** instead, after your own notes, and a line that says the same thing as another is dropped, so the two lists never overlap. It never prints "no action needed" or "no need to reply": you decide that when you read it.
   The built-in summary does this by rewording and trimming the key sentences; the AI (below) writes them in its own words.
 * **`include image`** (or `[image]`, `add the photo`, `attach pictures` ...) anywhere in your notes prints the pictures that came with
   the forwarded email, under the summary. Without it, no pictures print. Signature logos and tiny tracking pixels are never printed. The

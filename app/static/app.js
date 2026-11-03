@@ -286,7 +286,7 @@ function dashboard(main) {
       st.printer.held ? h("div", { class: "banner" }, `${st.printer.held} message${st.printer.held > 1 ? "s" : ""} waiting for the button  `,
         h("button", { class: "btn small primary", onclick: async () => { await api("/api/release", { method: "POST" }); toast("Printing waiting messages"); refresh(); } }, "Print them now"),
         h("button", { class: "btn small danger", onclick: async () => { if (confirm("Throw away all waiting messages?")) { await api("/api/discard-held", { method: "POST" }); refresh(); } } }, "Discard all")) : null,
-      st.sheet && st.sheet.state && st.sheet.state !== "disabled" ? h("div", {}, `Google Form: ${st.sheet.state}${st.sheet.last_check ? ", checked " + st.sheet.last_check : ""}${st.sheet.error ? " - " + st.sheet.error : ""}`) : null,
+      st.sheet && st.sheet.state && st.sheet.state !== "disabled" ? h("div", {}, `Google Form: ${st.sheet.state}${st.sheet.last_check ? ", checked " + st.sheet.last_check : ""}${st.sheet.error ? " - " + st.sheet.error : ""}${st.sheet.scheduled ? `. ${st.sheet.scheduled} scheduled, next prints ${st.sheet.next_scheduled}` : ""}`) : null,
       st.cpu_temp != null ? h("div", {}, `CPU ${st.cpu_temp.toFixed(0)}°C` + (st.fan && st.fan.state === "ok" ? ` · fan ${st.fan.fan_on ? "ON" : "off"}` : "")) : null,
       h("div", {}, `Button: ${st.button.state === "ok" ? "ready - " : ""}${st.button.message}`),
       h("div", {}, `Mailbox: ${st.mail.state}${st.mail.last_check ? " (checked " + st.mail.last_check + ")" : ""}${st.mail.error ? " - " + st.mail.error : ""}`),
@@ -295,12 +295,13 @@ function dashboard(main) {
       h("img", { src: `/history/${j.id}.png`, loading: "lazy", onclick: e => lightbox(e.target.src) }),
       h("div", { class: "t" }, j.title || "(untitled)"),
       h("div", { class: "row" }, h("span", { class: "badge " + j.status }, j.status), h("span", { class: "muted small" }, j.kind + " · " + j.created.slice(5, 16).replace("T", " "))),
+      j.status === "scheduled" ? h("div", { class: "when" }, "Prints " + j.due_text) : null,
       j.error ? h("div", { class: "small err" }, j.error) : null,
       fixedNotes(j.notes),
       h("div", { class: "row" },
         h("button", { class: "btn small", onclick: async () => { await api(`/api/history/${j.id}/reprint`, { method: "POST" }); toast("Reprinting"); refresh(); } }, "Reprint"),
-        j.status === "held" ? h("button", { class: "btn small primary", onclick: async () => { await api(`/api/history/${j.id}/release`, { method: "POST" }); refresh(); } }, "Print now") : null,
-        j.status === "pending" || j.status === "held" ? h("button", { class: "btn small danger", onclick: async () => { await api(`/api/history/${j.id}/cancel`, { method: "POST" }); refresh(); } }, "Cancel") : null))));
+        j.status === "held" || j.status === "scheduled" ? h("button", { class: "btn small primary", onclick: async () => { await api(`/api/history/${j.id}/release`, { method: "POST" }); refresh(); } }, "Print now") : null,
+        j.status === "pending" || j.status === "held" || j.status === "scheduled" ? h("button", { class: "btn small danger", onclick: async () => { await api(`/api/history/${j.id}/cancel`, { method: "POST" }); refresh(); } }, "Cancel") : null))));
     if (!hs.length) hist.append(h("div", { class: "muted", style: "grid-column:1/-1" }, "Nothing printed yet. Try “Print test”, or email the printer's address."));
     log.replaceChildren(...lg.map(l => h("div", { class: l.level }, `${l.ts}  ${l.msg}`)));
     renderPills(st);
@@ -709,12 +710,26 @@ function formPage(main) {
     status.replaceChildren(s.warning ? h("div", { style: "color:var(--bad);margin-bottom:4px" }, "⚠ " + s.warning) : "", h("div", {}, !CFG.sheet.enabled ? "Not switched on yet (Step 3)." :
       `Google Form link: ${s.state || "starting"}${s.last_check ? ", last checked " + s.last_check : ""}${s.error ? " - " + s.error : ""}${s.scheduled ? `. ${s.scheduled} scheduled, next prints ${s.next_scheduled}` : ""}`));
   }
-  refresh(); POLL = setInterval(() => refresh().catch(() => {}), 6000);
+  const queue = h("div", { class: "small" });
+  async function loadQueue() {
+    const hs = await api("/api/history?limit=200");
+    const sch = hs.filter(j => j.status === "scheduled").reverse().sort((a, b) => (a.due || "").localeCompare(b.due || ""));
+    queue.replaceChildren(h("h3", { style: "margin:10px 0 4px" }, `Waiting in the queue (${sch.length})`),
+      sch.length ? h("div", { class: "hist" }, sch.map(j => h("div", { class: "it" },
+        h("img", { src: `/history/${j.id}.png`, loading: "lazy", onclick: e => lightbox(e.target.src) }),
+        h("div", { class: "t" }, j.title || "(untitled)"),
+        h("div", { class: "when" }, "Prints " + j.due_text),
+        h("div", { class: "row" },
+          h("button", { class: "btn small primary", onclick: async () => { await api(`/api/history/${j.id}/release`, { method: "POST" }); toast("Printing now"); loadQueue(); } }, "Print now"),
+          h("button", { class: "btn small danger", onclick: async () => { if (confirm("Cancel this scheduled printout?")) { await api(`/api/history/${j.id}/cancel`, { method: "POST" }); loadQueue(); } } }, "Cancel")))))
+        : h("div", { class: "muted" }, "Nothing scheduled. A form row with a future Schedule Send time appears here the moment the box sees it, with the time it will print."));
+  }
+  refresh(); loadQueue(); POLL = setInterval(() => { refresh().catch(() => {}); loadQueue().catch(() => {}); }, 6000);
   api("/api/icons").then(r => { symbols.value = r.icons.filter(i => i.enabled).sort((a, b) => a.n - b.n).map(i => `${i.n} - ${i.name}`).join("\n"); });
 
   main.append(h("div", { class: "card" }, h("h2", {}, "Print from a Google Form"),
     h("p", { class: "small" }, "Make a Google Form (on your phone or computer) with a heading, body, up to three symbols and an image upload. Every time it's submitted, Google adds a row to a spreadsheet; this box checks the sheet, ",
-      h("strong", {}, "prints each new row"), ", and ", h("strong", {}, "deletes the row once it has printed"), ". Rows waiting for the printer or for the button stay in the sheet until they print."), status));
+      h("strong", {}, "prints each new row"), ", and ", h("strong", {}, "deletes the row once it has printed"), ". Rows waiting for the printer or for the button stay in the sheet until they print."), status, queue));
 
   main.append(h("div", { class: "card" }, h("h3", {}, "Step 1: make the form"),
     h("p", { class: "small" }, "Go to forms.google.com -> Blank form. Add these questions with exactly these titles (the box recognises them by name):"),

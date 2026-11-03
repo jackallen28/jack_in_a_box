@@ -53,7 +53,7 @@ def test_forwarded_pictures_print_only_when_you_ask():
     assert plain.images == []
     (asked,), _ = build_cards(fwd("chase Dave, include image", images=[picture()]), CFG)
     assert len(asked.images) == 1
-    assert [s.items for s in asked.sections if s.key == "actions"] == [["Chase Dave"]]    # the phrase isn't left in the to-do
+    assert next(s for s in asked.sections if s.key == "actions").items[0] == "Chase Dave"    # the phrase isn't left in the to-do
 
 
 def test_asking_for_an_image_when_there_is_none_is_noted_not_fatal():
@@ -122,7 +122,8 @@ def test_ai_bullets_become_bullets_and_tick_boxes_and_never_say_no_action(ollama
     fake.reply = {"message": {"content": "- Dave Smith says invoice 4471 for $12,480 is overdue.\n- ACTION: Reply by Friday.\n- No action needed."}}
     (card,), _ = build_cards(fwd(""), cfg)
     sec = next(s for s in card.sections if s.key == "summary")
-    assert sec.bullets and sec.items == ["Dave Smith says invoice 4471 for $12,480 is overdue.", "[ ] Reply by Friday"]
+    assert sec.bullets and sec.items == ["Dave Smith says invoice 4471 for $12,480 is overdue."]               # overview only
+    assert next(s for s in card.sections if s.key == "actions").items == ["Reply by Friday"]                    # the to-do lives under ACTIONS
     assert card.notes[0].startswith("AI summary")
 
 
@@ -187,3 +188,18 @@ def test_evaluate_command_line(ollama, capsys):
     assert evaluate.main(["--url", cfg["llm"]["url"], "--cases", "1", "--examples", "0", "--config", "/nonexistent/none.json"]) == 0
     assert "1 emails:" in capsys.readouterr().out
     assert evaluate.main(["--url", "http://127.0.0.1:1", "--cases", "1"]) == 2
+
+
+def test_a_to_do_that_repeats_one_of_yours_is_not_listed_twice(ollama):
+    cfg, fake = ollama
+    fake.reply = {"message": {"content": "- Dave Smith says invoice 4471 for $12,480 is overdue.\n- ACTION: Reply to Dave by Friday.\n- Dave needs a reply by Friday."}}
+    (card,), _ = build_cards(fwd("reply to Dave by friday"), cfg)
+    acts = next(s for s in card.sections if s.key == "actions").items
+    assert len(acts) == 1 and "Dave" in acts[0]                                      # your note, once
+    assert all("reply" not in x.lower() for x in next(s for s in card.sections if s.key == "summary").items)
+
+
+def test_overview_lines_that_only_restate_an_action_are_dropped():
+    from app.summarise import overview_and_actions
+    info, acts = overview_and_actions(["Invoice 4471 for $12,480 is 20 days overdue.", "Pay invoice 4471 by Friday.", "You need to pay invoice 4471 by Friday."], [])
+    assert acts == ["Pay invoice 4471 by Friday"] and info == ["Invoice 4471 for $12,480 is 20 days overdue."]

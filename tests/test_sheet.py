@@ -103,7 +103,7 @@ def env(tmp_path, monkeypatch):
     poller = SheetPoller(cfg, svc)
     seen = []
     orig = svc.submit
-    monkeypatch.setattr(svc, "submit", lambda card, copies=1, hold=False: (seen.append((card, hold)), orig(card, copies, hold))[1])
+    monkeypatch.setattr(svc, "submit", lambda card, copies=1, hold=False, due=None: (seen.append((card, hold)), orig(card, copies, hold, due))[1])
     yield cfg, svc, poller, seen
     srv.shutdown()
 
@@ -485,6 +485,7 @@ def sched(env, monkeypatch):
     Fake.headers_row = list(SCHED_HEADERS)
     Clock.value = _dt(2026, 11, 3, 10, 5, tzinfo=SYD)
     monkeypatch.setattr(sheet_mod, "datetime", Clock)
+    monkeypatch.setattr("app.service.datetime", Clock)
     return cfg, svc, poller, seen
 
 
@@ -496,82 +497,142 @@ def at(y, mo, d, h, mi):
     Clock.value = _dt(y, mo, d, h, mi, tzinfo=SYD)
 
 
+def states(svc):
+    return [j["status"] for j in jobs(svc)]
+
+
 def test_no_schedule_means_print_straight_away(sched):
     cfg, svc, poller, seen = sched
     Fake.rows = [srow(heading="Now", body="walk the dog")]
-    assert poller.poll_once() == 1 and len(jobs(svc)) == 1 and poller.status["scheduled"] == 0
+    assert poller.poll_once() == 1 and states(svc) == ["pending"] and poller.status["scheduled"] == 0
 
 
-def test_a_future_date_and_time_waits_in_the_sheet_then_prints_at_that_moment(sched):
+def test_a_future_row_enters_the_queue_at_once_stamped_with_its_print_time_then_prints_on_time(sched):
     cfg, svc, poller, seen = sched
     Fake.rows = [srow("2026-11-05T00:00:00", "5:30:00 PM", heading="Thursday thing", body="bring the form")]
-    assert poller.poll_once() == 0 and jobs(svc) == []
-    assert len(Fake.rows) == 1 and deletes() == []                                  # still safely in the sheet
-    assert poller.status["scheduled"] == 1 and poller.status["next_scheduled"] == "Thu 05 Nov 17:30"
-    at(2026, 11, 5, 17, 29)
-    assert poller.poll_once() == 0 and jobs(svc) == []                              # one minute early: still waiting
-    at(2026, 11, 5, 17, 30)                                                         # "at that point in time" = print now
-    assert poller.poll_once() == 1 and len(jobs(svc)) == 1
+    assert poller.poll_once() == 1                                                  # recognised -> in the queue immediately
+    assert states(svc) == ["scheduled"] and svc.db.one("SELECT due FROM jobs")["due"] == "2026-11-05T06:30:00+00:00"
     assert any("scheduled for Thu 05 Nov 17:30" in n for n in seen[0][0].notes)
+    assert poller.status["scheduled"] == 1 and poller.status["next_scheduled"] == "Thu 05 Nov 17:30"
+    assert len(Fake.rows) == 1 and deletes() == []                                  # still safely in the sheet
+    assert poller.poll_once() == 0 and len(jobs(svc)) == 1                          # not queued twice
+    at(2026, 11, 5, 17, 29)
+    assert svc.promote_due() == 0 and states(svc) == ["scheduled"]                  # one minute early: still waiting
+    at(2026, 11, 5, 17, 30)                                                         # "at that point in time" = print now
+    assert svc.promote_due() == 1 and states(svc) == ["pending"]
     svc.process_pending()
-    poller.reap()
+    assert states(svc) == ["printed"] and poller.reap() == 1
     assert Fake.rows == [] and poller.status["scheduled"] == 0
+
+
+def test_print_now_sends_a_scheduled_printout_straight_to_the_printer_and_cancel_discards_it(sched):
+    cfg, svc, poller, seen = sched
+    Fake.rows = [srow("2026-11-05T00:00:00", "5:30 PM", body="early please"), srow("2026-11-06T00:00:00", "9:00 AM", body="never mind")]
+    assert poller.poll_once() == 2 and states(svc) == ["scheduled", "scheduled"]
+    first, second = [j["id"] for j in jobs(svc)]
+    assert svc.release_one(first) is True and states(svc)[0] == "pending"
+    svc.process_pending()
+    assert states(svc)[0] == "printed" and states(svc)[1] == "scheduled"            # the other still waits
+    svc.db.execute("UPDATE jobs SET status='failed', error='Cancelled' WHERE id=?", (second,))
+    assert poller.reap() == 2 and Fake.rows == []                                   # printed + cancelled rows both leave the sheet
+
+
+def test_the_button_does_not_release_scheduled_printouts(sched):
+    cfg, svc, poller, seen = sched
+    Fake.rows = [srow("2026-11-05T00:00:00", "5:30 PM", body="Thursday")]
+    poller.poll_once()
+    assert svc.release_held() == 0 and states(svc) == ["scheduled"]
 
 
 def test_a_scheduled_moment_in_the_past_prints_straight_away(sched):
     cfg, svc, poller, seen = sched
     Fake.rows = [srow("2026-11-01T00:00:00", "9:00 AM", body="late one")]
-    assert poller.poll_once() == 1 and len(jobs(svc)) == 1
+    assert poller.poll_once() == 1 and states(svc) == ["pending"]
 
 
 def test_time_only_uses_the_day_the_form_was_sent(sched):
     cfg, svc, poller, seen = sched
     Fake.rows = [srow("", "17:30", heading="Tonight", body="take the bins out")]       # sent today 10:00 -> today 5:30pm
-    assert poller.poll_once() == 0 and poller.status["next_scheduled"] == "Tue 03 Nov 17:30"
+    assert poller.poll_once() == 1 and states(svc) == ["scheduled"] and poller.status["next_scheduled"] == "Tue 03 Nov 17:30"
     at(2026, 11, 3, 17, 31)
-    assert poller.poll_once() == 1
+    assert svc.promote_due() == 1
 
 
 def test_time_only_that_has_already_passed_today_prints_now(sched):
     cfg, svc, poller, seen = sched
     Fake.rows = [srow("", "9:00:00 AM", body="too late for that")]
-    assert poller.poll_once() == 1
+    assert poller.poll_once() == 1 and states(svc) == ["pending"]
 
 
 def test_the_date_is_taken_from_when_the_form_was_sent_not_from_when_the_pi_looked(sched):
     cfg, svc, poller, seen = sched
     at(2026, 11, 4, 8, 0)                                                            # the Pi first sees it the next morning
     Fake.rows = [srow("", "17:30", ts="2026-11-03 10:00:00", body="sent yesterday for 5:30pm")]
-    assert poller.poll_once() == 1                                                   # yesterday 5:30pm is past -> now
+    assert poller.poll_once() == 1 and states(svc) == ["pending"]                    # yesterday 5:30pm is past -> now
 
 
 def test_date_only_waits_for_the_morning_print_time_and_today_means_now(sched):
     cfg, svc, poller, seen = sched
     Fake.rows = [srow("2026-11-06T00:00:00", "", body="Friday job"), srow("2026-11-03T00:00:00", "", body="today job")]
-    assert poller.poll_once() == 1                                                   # today's prints now, Friday's waits
+    assert poller.poll_once() == 2 and sorted(states(svc)) == ["pending", "scheduled"]
     assert poller.status["scheduled"] == 1 and poller.status["next_scheduled"] == "Fri 06 Nov 07:00"
     at(2026, 11, 6, 7, 0)
-    assert poller.poll_once() == 1 and len(jobs(svc)) == 2
+    assert svc.promote_due() == 1
 
 
 def test_other_date_formats_from_a_text_column_work(sched):
     cfg, svc, poller, seen = sched
     Fake.rows = [srow("5/11/2026", "5pm", body="typed by hand")]
-    assert poller.poll_once() == 0 and poller.status["next_scheduled"] == "Thu 05 Nov 17:00"
+    assert poller.poll_once() == 1 and poller.status["next_scheduled"] == "Thu 05 Nov 17:00"
 
 
 def test_an_unreadable_schedule_prints_now_and_says_so(sched):
     cfg, svc, poller, seen = sched
     Fake.rows = [srow("whenever", "", body="no idea when")]
-    assert poller.poll_once() == 1
+    assert poller.poll_once() == 1 and states(svc) == ["pending"]
     assert any("couldn't read the schedule" in n for n in seen[0][0].notes)
 
 
-def test_scheduled_rows_do_not_block_ones_behind_them_and_the_loop_knows_when_to_wake(sched):
+def test_scheduled_rows_do_not_block_ones_behind_them(sched):
     cfg, svc, poller, seen = sched
     Fake.rows = [srow("2026-11-09T00:00:00", "8:00 AM", body="next Monday"), srow(body="print me now")]
-    assert poller.poll_once() == 1 and len(jobs(svc)) == 1
-    assert poller._next_due == _dt(2026, 11, 9, 8, 0, tzinfo=SYD)
+    assert poller.poll_once() == 2 and sorted(states(svc)) == ["pending", "scheduled"]
+
+
+def test_the_web_queue_shows_when_a_scheduled_printout_is_expected_and_lets_you_print_or_cancel_it(sched):
+    from app.calsync import CalendarSync
+    from app.gpio import ButtonController
+    from app.mailbox import MailPoller
+    from app.web import create_app
+    cfg, svc, poller, seen = sched
+    Fake.rows = [srow("2026-11-05T00:00:00", "5:30 PM", heading="Thursday thing", body="bring the form"),
+                 srow("2026-11-06T00:00:00", "9:00 AM", heading="Friday thing", body="another")]
+    poller.poll_once()
+    c = create_app(cfg, svc, MailPoller(cfg, svc), CalendarSync(cfg, svc), ButtonController(cfg, svc), sheet=poller).test_client()
+    h = {"X-Requested-With": "fetch"}
+    c.post("/api/setup", json={"password": "hunter22"}, headers=h)
+    rows = {r["title"]: r for r in c.get("/api/history").get_json()}
+    assert rows["Thursday thing"]["status"] == "scheduled" and rows["Thursday thing"]["due_text"] == "Thu 05 Nov 17:30"
+    assert rows["Friday thing"]["due_text"] == "Fri 06 Nov 09:00"
+    st = c.get("/api/status").get_json()
+    assert st["sheet"]["scheduled"] == 2 and st["sheet"]["next_scheduled"] == "Thu 05 Nov 17:30"
+    assert c.post(f"/api/history/{rows['Thursday thing']['id']}/release", headers=h).get_json() == {"ok": True}      # Print now
+    assert c.post(f"/api/history/{rows['Friday thing']['id']}/cancel", headers=h).status_code == 200
+    now = {r["title"]: r["status"] for r in c.get("/api/history").get_json()}
+    assert now == {"Thursday thing": "pending", "Friday thing": "failed"}
+
+
+def test_old_databases_get_the_due_column(tmp_path):
+    import sqlite3
+    from app.db import DB
+    con = sqlite3.connect(tmp_path / "old.db")
+    con.execute("CREATE TABLE jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, created TEXT NOT NULL, kind TEXT, source TEXT, title TEXT, notes TEXT, "
+                "status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, error TEXT, printed_at TEXT, last_try TEXT, png TEXT)")
+    con.commit()
+    con.close()
+    db = DB(tmp_path / "old.db")
+    db.execute("INSERT INTO jobs(created, status, due) VALUES ('2026-11-03T10:00:00', 'scheduled', '2026-11-05T06:30:00+00:00')")
+    assert db.one("SELECT due FROM jobs")["due"] == "2026-11-05T06:30:00+00:00"
 
 
 def test_the_sheets_own_timezone_is_used_when_google_reports_it(sched, monkeypatch):
@@ -606,7 +667,7 @@ def test_values_from_the_first_version_of_the_script_are_converted_from_utc(sche
 def test_an_old_script_still_schedules_and_the_page_warns_about_it(sched):
     cfg, svc, poller, seen = sched
     Fake.rows = [[*row(ts="2026-11-02T23:00:00.000Z", body="Thursday job"), "2026-11-04T13:00:00.000Z", "1899-12-30T07:30:00.000Z"]]
-    assert poller.poll_once() == 0 and jobs(svc) == [] and poller.status["next_scheduled"] == "Thu 05 Nov 17:30"
+    assert poller.poll_once() == 1 and states(svc) == ["scheduled"] and poller.status["next_scheduled"] == "Thu 05 Nov 17:30"
     assert "out of date" in poller.status["warning"]                  # Fake reports no timezone, like the old script
 
 
