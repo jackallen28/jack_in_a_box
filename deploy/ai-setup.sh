@@ -15,7 +15,7 @@ if [[ "$ARCH" != "aarch64" && "$ARCH" != "x86_64" ]]; then
 This system is $ARCH (32-bit). Ollama only runs on 64-bit systems, so the AI can't be installed here.
 
 A Raspberry Pi 3B+ can run 64-bit. To switch (about 15 minutes):
-  1. Back up the app's settings:  cp -r ~/jackallen/jack-in-a-box/data ~/jiab-data-backup   (copy it off the Pi)
+  1. Back up the app's settings:  cp -r ~/jack_in_a_box/data ~/jiab-data-backup   (copy it off the Pi)
   2. On your computer open Raspberry Pi Imager -> Raspberry Pi 3 -> "Raspberry Pi OS Lite (64-bit)".
      In the settings (gear icon) set the hostname, a user + password, Wi-Fi and enable SSH.
   3. Boot the Pi, reinstall Jack in a Box (README), copy your data folder back, then re-run this script.

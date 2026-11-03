@@ -31,12 +31,16 @@ def sh(cmd, cwd=None, env=None, check=True):
 
 
 class Rig:
-    """origin.git  ->  'GitHub';  pi/  ->  the clone on the Pi (project in pi/jack-in-a-box)."""
+    """origin.git  ->  'GitHub';  pi/  ->  the clone on the Pi.
 
-    def __init__(self, tmp: Path):
+    layout "root": the project IS the repo (the real layout of jack_in_a_box).
+    layout "nested": the project sits in a sub-folder of a bigger repo (the layout it used to have)."""
+
+    def __init__(self, tmp: Path, layout: str = "root"):
+        self.sub = "jack-in-a-box/" if layout == "nested" else ""
         self.tmp = tmp
         self.origin, self.work, self.pi = tmp / "origin.git", tmp / "work", tmp / "pi"
-        self.dir = self.pi / "jack-in-a-box"
+        self.dir = self.pi / self.sub.rstrip("/") if self.sub else self.pi
         self.data = self.dir / "data"
         self.bin = tmp / "bin"
         self.calls = tmp / "calls.log"
@@ -45,12 +49,12 @@ class Rig:
         self.g = g
         sh(["git", "init", "-q", "--bare", "-b", "main", str(self.origin)])
         sh(["git", "clone", "-q", str(self.origin), str(self.work)])
-        (self.work / "jack-in-a-box/deploy").mkdir(parents=True)
-        shutil.copy(ROOT / "deploy/update.sh", self.work / "jack-in-a-box/deploy/update.sh")
-        (self.work / "jack-in-a-box/deploy/update.sh").chmod(0o755)
-        (self.work / "jack-in-a-box/requirements.txt").write_text("flask\n")
-        (self.work / "jack-in-a-box/.gitignore").write_text("data/\n.venv/\n")
-        self.commit("v1", {"jack-in-a-box/VERSION": "1"})
+        (self.work / (self.sub + "deploy")).mkdir(parents=True)
+        shutil.copy(ROOT / "deploy/update.sh", self.work / (self.sub + "deploy/update.sh"))
+        (self.work / (self.sub + "deploy/update.sh")).chmod(0o755)
+        (self.work / (self.sub + "requirements.txt")).write_text("flask\n")
+        (self.work / (self.sub + ".gitignore")).write_text("data/\n.venv/\n")
+        self.commit("v1", {self.sub + "VERSION": "1"})
         sh(["git", "clone", "-q", "-b", "main", str(self.origin), str(self.pi)])
         # fake venv + stubs
         (self.dir / ".venv/bin").mkdir(parents=True)
@@ -81,6 +85,9 @@ class Rig:
         self.set_config(updates={"enabled": True}, web={"port": self.port})
         self.env = {**os.environ, "PATH": f"{self.bin}:{os.environ['PATH']}", "SYSTEMCTL": str(self.bin / "systemctl"),
                     "JACK_IN_A_BOX_DATA": str(self.data), "UPDATE_HEALTH_SECONDS": "4", **HERMETIC}
+
+    def p(self, name: str) -> str:
+        return self.sub + name
 
     @staticmethod
     def script(path: Path, body: str):
@@ -116,9 +123,9 @@ class Rig:
             subprocess.run(["kill", (self.tmp / "app.pid").read_text().strip()], capture_output=True)
 
 
-@pytest.fixture()
-def rig(tmp_path):
-    r = Rig(tmp_path)
+@pytest.fixture(params=["root", "nested"])
+def rig(tmp_path, request):
+    r = Rig(tmp_path, request.param)
     r.script(r.bin / "start", "")  # no-op, keeps bin non-empty
     sh([str(r.bin / "systemctl"), "restart"], check=True)   # "boot" the fake app
     yield r
@@ -132,7 +139,7 @@ def test_up_to_date_does_nothing(rig):
 
 
 def test_update_applies_restarts_and_reports(rig):
-    new = rig.commit("Add the friends queue", {"jack-in-a-box/VERSION": "2"})
+    new = rig.commit("Add the friends queue", {rig.p("VERSION"): "2"})
     rc, st = rig.run()
     assert rc == 0 and st["result"] == "updated" and "Add the friends queue" in st["message"]
     assert rig.head() == new and (rig.dir / "VERSION").read_text() == "2"
@@ -141,7 +148,7 @@ def test_update_applies_restarts_and_reports(rig):
 
 
 def test_dependency_change_runs_pip(rig):
-    rig.commit("needs a new package", {"jack-in-a-box/requirements.txt": "flask\nnewpkg\n"})
+    rig.commit("needs a new package", {rig.p("requirements.txt"): "flask\nnewpkg\n"})
     rc, st = rig.run()
     assert st["result"] == "updated" and "pip install --quiet -r" in rig.log()
 
@@ -149,14 +156,14 @@ def test_dependency_change_runs_pip(rig):
 def test_data_folder_survives_updates(rig):
     (rig.data / "history").mkdir()
     (rig.data / "history/1.png").write_text("keep me")
-    rig.commit("v2", {"jack-in-a-box/VERSION": "2"})
+    rig.commit("v2", {rig.p("VERSION"): "2"})
     rig.run()
     assert (rig.data / "history/1.png").read_text() == "keep me" and (rig.data / "config.json").exists()
 
 
 def test_broken_update_rolls_back_and_is_not_retried(rig):
     good = rig.head()
-    bad = rig.commit("this will not start", {"jack-in-a-box/BROKEN": "x"})
+    bad = rig.commit("this will not start", {rig.p("BROKEN"): "x"})
     rc, st = rig.run()
     assert rc == 1 and st["result"] == "rolled_back" and bad[:7] in st["message"]
     assert rig.head() == good and not (rig.dir / "BROKEN").exists()             # back on the working version
@@ -166,14 +173,14 @@ def test_broken_update_rolls_back_and_is_not_retried(rig):
     rc, st = rig.run()                                                          # next hourly check
     assert rc == 0 and st["result"] == "error" and "Skipping" in st["message"]
     assert rig.log().count("restart") == restarts                                # NOT retried
-    sh("git rm -q jack-in-a-box/BROKEN && git -c user.name=t -c user.email=t@t commit -q -m unbreak && git push -q origin main", cwd=rig.work)
+    sh(f"git rm -q {rig.p('BROKEN')} && git -c user.name=t -c user.email=t@t commit -q -m unbreak && git push -q origin main", cwd=rig.work)
     rc, st = rig.run()
     assert st["result"] == "updated" and not (rig.data / "update-bad-commit").exists()
 
 
 def test_switched_off_unless_forced(rig):
     rig.set_config(updates={"enabled": False}, web={"port": rig.port})
-    new = rig.commit("v2", {"jack-in-a-box/VERSION": "2"})
+    new = rig.commit("v2", {rig.p("VERSION"): "2"})
     old = rig.head()
     rc, st = rig.run()
     assert rig.head() == old and st is None                                      # auto-update off: nothing happens
@@ -189,7 +196,7 @@ def test_expired_token_or_offline_reports_clearly(rig):
 
 
 def test_zip_install_explains_itself(rig, tmp_path):
-    plain = tmp_path / "zip" / "jack-in-a-box"
+    plain = tmp_path / "zip" / "app-folder"
     shutil.copytree(rig.dir / "deploy", plain / "deploy")
     r = subprocess.run([str(plain / "deploy/update.sh")], env={**rig.env, "JACK_IN_A_BOX_DATA": str(plain / "data")},
                        capture_output=True, text=True)
@@ -199,7 +206,7 @@ def test_zip_install_explains_itself(rig, tmp_path):
 
 def test_cant_restart_is_reported_not_rolled_back(rig):
     (rig.tmp / "NO_SUDO").write_text("1")
-    new = rig.commit("v2", {"jack-in-a-box/VERSION": "2"})
+    new = rig.commit("v2", {rig.p("VERSION"): "2"})
     rc, st = rig.run()
     assert rc == 1 and st["result"] == "error" and "restart" in st["message"] and rig.head() == new
 

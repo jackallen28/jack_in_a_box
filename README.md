@@ -51,19 +51,19 @@ page at the Pi's IP address.
 Write the card, put it in the Pi, plug in the printer (USB) and the power.
 
 **2. Make a read-only GitHub token** (once; the repo is private): GitHub -> Settings -> Developer settings -> Personal access tokens ->
-*Fine-grained tokens* -> repository `jackallen`, permission **Contents: Read-only**, expiry 1 year. Copy it.
+*Fine-grained tokens* -> repository `jack_in_a_box`, permission **Contents: Read-only**, expiry 1 year. Copy it.
 
 **3. SSH in** (give it a minute or two to boot): `ssh YOURUSER@jack-in-a-box.local` (or use the Pi's IP from your router's device list). Then paste:
 
 ```bash
 sudo apt-get update && sudo apt-get install -y git
 read -rsp "Paste GitHub token: " T; echo
-git clone -b jack-in-a-box "https://jackallen28:${T}@github.com/jackallen28/jackallen.git" && unset T
-bash jackallen/jack-in-a-box/deploy/install.sh --with-ai --reboot
+git clone "https://jackallen28:${T}@github.com/jackallen28/jack_in_a_box.git" && unset T
+bash jack_in_a_box/deploy/install.sh --with-ai --reboot
 ```
 That installs everything, sets it to start on every boot, turns on hourly auto-updates, frees RAM for the AI and installs Ollama plus the small model
 (about 10-20 minutes, mostly downloading), then reboots by itself. Drop `--with-ai` (and `--reboot`) if you don't want the AI; you can add it later with
-`bash ~/jackallen/jack-in-a-box/deploy/enable-ai.sh`.
+`bash ~/jack_in_a_box/deploy/enable-ai.sh`.
 
 **4. In your browser** (a minute after the reboot): `http://jack-in-a-box.local:8080` -> choose a password -> **Printer** tab (*Check connection*, *Print a test
 reminder*) -> **Email** (Gmail address + app password, your addresses) -> **Calendar** (iCal link) -> **Messages** (friends, button) ->
@@ -77,17 +77,17 @@ One command, run on the Pi (over SSH is fine). It installs everything, sets the 
 automatically every time the Pi boots** (and restart itself if it ever crashes), and starts it now:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jackallen28/jackallen/jack-in-a-box/jack-in-a-box/deploy/bootstrap.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jackallen28/jack_in_a_box/main/deploy/bootstrap.sh | bash
 ```
 
 **The repo is private**, so the one-liner above won't work (GitHub won't serve the file without a login). Make a read-only
 token once (GitHub → Settings → Developer settings → Personal access tokens → **Fine-grained tokens**: repository
-`jackallen`, permission **Contents: Read-only**, expiry 1 year), then on the Pi paste it **once**:
+`jack_in_a_box`, permission **Contents: Read-only**, expiry 1 year), then on the Pi paste it **once**:
 
 ```bash
 read -rsp "Paste GitHub token: " T; echo
-git clone -b jack-in-a-box "https://jackallen28:${T}@github.com/jackallen28/jackallen.git" && unset T
-bash jackallen/jack-in-a-box/deploy/install.sh
+git clone "https://jackallen28:${T}@github.com/jackallen28/jack_in_a_box.git" && unset T
+bash jack_in_a_box/deploy/install.sh
 ```
 (`read -s` keeps the token out of your shell history.) The installer moves the token into a private file on the Pi
 (`data/.git-credentials`, readable only by you) and removes it from the clone's URL, so it never needs typing again.
@@ -108,9 +108,9 @@ updater). Updates need the git-clone install above, not the ZIP route.
 `journalctl -u jack-in-a-box-update -n 30` shows what it did.
 
 **Token expiry:** fine-grained tokens expire. If updates start failing with "Couldn't reach GitHub", make a new token and re-run
-`bash ~/jackallen/jack-in-a-box/deploy/install.sh`; it will ask for it.
+`bash ~/jack_in_a_box/deploy/install.sh`; it will ask for it.
 
-Updating by hand any time: `bash ~/jackallen/jack-in-a-box/deploy/update.sh --force`, or re-run the installer
+Updating by hand any time: `bash ~/jack_in_a_box/deploy/update.sh --force`, or re-run the installer
 (your settings and history in `data/` are kept).
 
 Then:
@@ -309,7 +309,7 @@ while powering the printer on to print its self-test sheet, which lists the inte
 Cable the printer straight into the Pi's Ethernet port, then:
 
 ```bash
-bash ~/jack-in-a-box-src/jack-in-a-box/deploy/printer-ethernet.sh     # path from the one-line installer; or deploy/printer-ethernet.sh in your clone
+bash ~/jack_in_a_box/deploy/printer-ethernet.sh
 ```
 then in the web page: **Printer** → Connection *Network* → the printer's IP (Epson cards with no DHCP answer on
 `192.168.192.168` by default) → Save → *Check connection*.

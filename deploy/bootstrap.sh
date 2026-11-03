@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
-# One-line installer.  On the Pi:
+# One-line installer.  On the Pi (public repo only):
 #
-#   curl -fsSL https://raw.githubusercontent.com/jackallen28/jackallen/BRANCH/jack-in-a-box/deploy/bootstrap.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/jackallen28/jack_in_a_box/main/deploy/bootstrap.sh | bash
+#   ...add  -s -- --with-ai  after "bash" to set up local AI summaries too.
 #
-# (If the GitHub repo is private, use the git clone form in the README instead.)
+# (If the GitHub repo is private - it is - use the git clone form in the README instead.)
 # Safe to run again later: it pulls the newest version, reinstalls and restarts the service.
 set -euo pipefail
 
-REPO="${REPO:-https://github.com/jackallen28/jackallen.git}"
-BRANCH="${BRANCH:-jack-in-a-box}"
-DEST="${DEST:-$HOME/jack-in-a-box-src}"
+REPO="${REPO:-https://github.com/jackallen28/jack_in_a_box.git}"
+BRANCH="${BRANCH:-main}"
+DEST="${DEST:-$HOME/jack_in_a_box}"
 
 sudo apt-get update -qq
 sudo apt-get install -y -qq git
@@ -21,8 +22,7 @@ if [[ -d "$DEST/.git" ]]; then
   git -C "$DEST" reset -q --hard "origin/$BRANCH"
 else
   echo "==> Downloading to $DEST"
-  git clone --depth 1 --filter=blob:none --sparse -b "$BRANCH" "$REPO" "$DEST"
-  git -C "$DEST" sparse-checkout set jack-in-a-box
+  git clone --depth 1 -b "$BRANCH" "$REPO" "$DEST"
 fi
 
-exec bash "$DEST/jack-in-a-box/deploy/install.sh" "$@"
+exec bash "$DEST/deploy/install.sh" "$@"
