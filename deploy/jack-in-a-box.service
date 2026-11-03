@@ -1,0 +1,18 @@
+[Unit]
+Description=Jack in a Box - email to receipt-printer reminders
+After=network-online.target
+StartLimitIntervalSec=0
+Wants=network-online.target
+
+[Service]
+User=@USER@
+SupplementaryGroups=lp gpio
+WorkingDirectory=@DIR@
+Environment=JACK_IN_A_BOX_DATA=@DIR@/data
+Environment=PYTHONUNBUFFERED=1
+ExecStart=@DIR@/.venv/bin/python -m app
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

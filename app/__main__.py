@@ -1,0 +1,54 @@
+"""Entry point:  python -m app"""
+from __future__ import annotations
+
+import logging
+import socket
+import sys
+
+from . import plugins
+from .calsync import CalendarSync
+from .config import ConfigStore
+from .gpio import ButtonController
+from .mailbox import MailPoller
+from .service import RingHandler, Service
+from .web import create_app
+
+
+def lan_ip() -> str:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("10.255.255.255", 1))
+            return s.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+
+
+def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s", stream=sys.stdout)
+    logging.getLogger().addHandler(RingHandler())
+    logging.getLogger("werkzeug").setLevel(logging.WARNING)
+    logging.getLogger("waitress").setLevel(logging.WARNING)
+
+    cfg = ConfigStore()
+    svc = Service(cfg)
+    plugins.load(cfg.data["integrations"].get("plugins_enabled", True))
+    poller, cal = MailPoller(cfg, svc), CalendarSync(cfg, svc)
+    svc.start()
+    poller.start()
+    cal.start()
+    button = ButtonController(cfg, svc)
+    button.start()
+    app = create_app(cfg, svc, poller, cal, button)
+
+    port = int(cfg.data["web"].get("port", 8080))
+    log = logging.getLogger("app")
+    log.info("Config page: http://%s:%d  (or http://%s.local:%d)", lan_ip(), port, socket.gethostname(), port)
+    try:
+        from waitress import serve
+        serve(app, host="0.0.0.0", port=port, threads=4)
+    except ImportError:
+        app.run(host="0.0.0.0", port=port, threaded=True)
+
+
+if __name__ == "__main__":
+    main()

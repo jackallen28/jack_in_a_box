@@ -1,0 +1,2 @@
+# Epson printers (vendor 04b8): readable by members of 'lp' (needed for the optional pyusb backend)
+SUBSYSTEM=="usb", ATTRS{idVendor}=="04b8", MODE="0664", GROUP="lp"
