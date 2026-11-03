@@ -239,6 +239,23 @@ SECTIONS = {
         F("power.min_uptime_minutes", "Never power off in the first (minutes after boot)", "number", min=5, max=600),
         F("power.keep_awake_before_calendar_hours", "Stay on if a calendar reminder prints within (hours)", "number", min=0, max=72),
     ],
+    "airprint": [
+        F("airprint.enabled", "Share the printer on my network (AirPrint)", "bool", "Phones, tablets, Macs, Windows PCs and Android devices on your network will see the printer and can print to it."),
+        F("airprint.name", "Printer name shown on devices", help="e.g. Jack in a Box"),
+        F("airprint.port", "Port", "number", "631 is the standard. If it's taken, 6310 is used automatically; devices find it by themselves.", min=1, max=65535),
+        F("airprint.hold_for_button", "Hold AirPrint pages until I press the message button", "bool", "Off = they print straight away."),
+        F("airprint.allow_any_network", "Also accept print jobs from outside my own network", "bool", "Leave OFF unless you know why: anyone who can reach the Pi could print."),
+        F("airprint.autocrop", "Trim blank paper", "select", options=opts(
+            ("margins", "Top, bottom and the page's side margins (best for letters and documents)"),
+            ("vertical", "Top and bottom only"), ("none", "Don't trim"))),
+        F("airprint.dither", "Pictures and text", "select", options=opts(
+            ("auto", "Decide for each page"), ("text", "Always sharp black and white (text, line art)"), ("photo", "Always greys (photos)"))),
+        F("airprint.max_pages", "Most pages printed from one document", "number", min=1, max=100),
+        F("airprint.max_copies", "Most copies of one document", "number", min=1, max=20),
+        F("airprint.max_job_mb", "Biggest document accepted (MB)", "number", min=1, max=200),
+        F("airprint.max_queued", "Say 'busy' when this many AirPrint pages are waiting", "number", min=1, max=200),
+        F("airprint.max_height_mm", "Longest printout (mm)", "number", "A very long page is cut here.", min=100, max=2000),
+    ],
     "sheet": [
         F("sheet.enabled", "Print new rows from the Google Sheet", "bool"),
         F("sheet.url", "Web app URL (from the Apps Script deployment)", help="Starts with https://script.google.com/macros/s/ and ends with /exec"),

@@ -31,7 +31,7 @@ log = logging.getLogger("web")
 PUBLIC_API = {"/api/state", "/api/login", "/api/setup", "/api/print"}
 
 
-def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button, fan=None, power=None, sheet=None) -> Flask:
+def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button, fan=None, power=None, sheet=None, airprint=None) -> Flask:
     app = Flask(__name__, static_folder=str(APP_DIR / "static"), static_url_path="/static")
     app.secret_key = cfg.data["web"]["secret_key"]
     app.config.update(SESSION_COOKIE_SAMESITE="Strict", SESSION_COOKIE_HTTPONLY=True,
@@ -201,6 +201,8 @@ def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button, 
         new["icons"] = clean_icons(new.get("icons"))
         cfg.replace(new)
         button.reconfigure()
+        if airprint is not None:
+            airprint.wake.set()                              # switch AirPrint on/off or rename it straight away
         if fan is not None:
             fan.reconfigure()
         poller.kick.set()
@@ -229,6 +231,7 @@ def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button, 
         return jsonify(printer=svc.status(), mail=poller.status, calendar=cal.status, button=button.status,
                        cpu_temp=read_cpu_temp(), fan=(fan.status if fan is not None else None),
                        sheet=(sheet.status if sheet is not None else None),
+                       airprint=(airprint.status if airprint is not None else None),
                        now=datetime.now().strftime("%a %d %b %H:%M"),
                        email_configured=bool(cfg.data["email"]["username"] and cfg.data["email"]["enabled"]))
 
@@ -475,6 +478,22 @@ def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button, 
     def ai_training():
         body = aifeedback.export_jsonl(svc.db, llm.system_prompt(cfg.data["llm"]), llm.ask, cfg.data)
         return Response(body, mimetype="application/x-ndjson", headers={"Content-Disposition": "attachment; filename=jack-in-a-box-ai-training.jsonl"})
+
+    @app.get("/api/airprint")
+    def airprint_status():
+        if airprint is None:
+            return jsonify(state="disabled", message="AirPrint isn't running in this session.")
+        from . import airprint as ap
+        s = dict(airprint.status)
+        s.update(pdf=ap.pdf_available(), bonjour_library=ap.zeroconf_available(), formats=ap.supported_formats(),
+                 recent=svc.db.all("SELECT id, created, title, status FROM jobs WHERE source='airprint' ORDER BY id DESC LIMIT 8"))
+        return jsonify(s)
+
+    @app.post("/api/airprint-test")
+    def airprint_test():
+        if airprint is not None:
+            airprint.wake.set()                                  # pick up settings that were just saved
+        return jsonify(airprint.self_test() if airprint is not None else {"ok": False, "message": "AirPrint isn't running."})
 
     @app.post("/api/sheet-script")
     def sheet_script():

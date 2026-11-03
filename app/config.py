@@ -235,6 +235,21 @@ DEFAULTS: dict = {
         "treat_as": "admin",        # admin: every form row is YOU - prints straight away | by_sender: use the verified email
         "unknown_policy": "hold",   # (by_sender only) someone not on your lists: hold (wait for the button) | print | ignore
     },
+    # Share the receipt printer on your network as an AirPrint / IPP Everywhere printer (see app/airprint.py)
+    "airprint": {
+        "enabled": False,
+        "name": "Jack in a Box",
+        "port": 631,                # if 631 isn't available (not root, or CUPS is there) 6310 is used; clients find it either way
+        "allow_any_network": False, # False: only devices on your own network (private addresses) can print
+        "hold_for_button": False,   # True: AirPrint pages wait for the message button, like friends' messages
+        "max_pages": 10,            # pages printed from one document
+        "max_copies": 5,
+        "max_job_mb": 30,
+        "max_queued": 20,           # busy (refuse more) when this many AirPrint pages are waiting
+        "autocrop": "margins",      # none | vertical | margins: trim blank paper
+        "dither": "auto",           # auto | text | photo
+        "max_height_mm": 700,
+    },
     "fan": {
         "enabled": False,
         "pin": 22,                  # BCM. Drive a transistor/MOSFET that switches the fan - never the fan itself.

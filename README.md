@@ -383,6 +383,28 @@ venv/bin/python -m app.evaluate --url http://192.168.1.20:11434 --model qwen2.5:
   For each email it checks: did the AI's answer pass the not-invented check, a sensible number of bullets, every key fact (amount, date,
   place) present, and a to-do present exactly when the email asks for something. Change a setting, run it again, keep what scores better.
 
+## AirPrint: print to the receipt printer from your other devices
+
+Tick **AirPrint -> Share the printer on my network** (and Save). The printer then shows up in the print dialog of iPhones, iPads, Macs, Windows 10/11 PCs and
+Android devices on your network, and you print to it like any printer plugged into them. There is **no CUPS and no driver to install**: the box speaks IPP itself and
+announces the printer over Bonjour (mDNS).
+
+* **What you can print:** PDFs, photos (JPEG/PNG), web pages and documents (devices turn those into PDF or Apple/PWG raster, which it reads), and plain text.
+* **How it comes out:** each page is trimmed of blank paper (top and bottom, and equal side margins; *Trim blank paper* in the settings), scaled to the paper width
+  (576 dots / 72 mm), thresholded for text and line art or dithered for photos (decided per page, or forced in the settings), and put on the **same print queue** as emails
+  and form messages. A blank page prints nothing. It appears in the history as an `airprint` printout you can Cancel or Reprint; the device's print status (printing,
+  done, cancelled) follows the queue. A page is scaled to the paper, so choose a small paper size (4x6 in or A6) on the phone for readable text.
+* **Limits:** at most 10 pages and 5 copies per document, 30 MB per document, and "busy" when 20 pages are already waiting (all adjustable). *Hold AirPrint pages until I press the
+  message button* makes them wait for the button like friends' messages.
+* **Who can print:** only devices on your own network (private addresses). Turning that off lets anything that can reach the Pi print. It is plain IPP (not encrypted), fine on a home network.
+* **Finding it:** it listens on port 631 (or 6310 if 631 isn't available, which the status page tells you) and announces the name you chose. If a device doesn't list it:
+  iPhone/Mac use *Add Printer -> IP* with the address shown on the AirPrint page and queue `ipp/print`; Windows: *Add manually -> Select a shared printer by name* ->
+  `http://<the Pi's address>:631/ipp/print`. The **Test it** button asks the printer for its description, the way a phone would.
+* **To install:** the update installs two small packages (`zeroconf` for Bonjour, `pypdfium2` for PDFs). Without `zeroconf` it still works when you add it by address; without
+  `pypdfium2` PDFs are refused (the page says so).
+* **Honest caveat:** I built and tested this against an independent IPP library and real multicast announcements on the same machine, and with raster files I generated, but
+  **not with a real iPhone, Mac, Windows PC or Android phone**. If a device can't find it or prints something odd, tell me which device and what you saw.
+
 ## Power, cooling and the email mailbox
 
 **What it costs to run:** a Pi 3B+ idles around 2-3 W, roughly 20-25 kWh a year, which is about **$6-9 a year** at ~30c/kWh. The printer only

@@ -125,10 +125,10 @@ class Service:
             sql, args = sql + " AND id=?", (job_id,)
         return self.db.execute(sql, args).rowcount
 
-    def submit_image(self, img: Image.Image, title: str, kind: str = "sheet", source: str = "web") -> int:
-        """Queue an already-drawn bitmap (e.g. the symbol cheat-sheet)."""
-        cur = self.db.execute("INSERT INTO jobs(created, kind, source, title, notes, status) VALUES (?,?,?,?,?, 'pending')",
-                              (datetime.now().isoformat(timespec="seconds"), kind, source, title[:120], "[]"))
+    def submit_image(self, img: Image.Image, title: str, kind: str = "sheet", source: str = "web", hold: bool = False) -> int:
+        """Queue an already-drawn bitmap (e.g. the symbol cheat-sheet, or a page sent by AirPrint).  ``hold`` waits for the button."""
+        cur = self.db.execute("INSERT INTO jobs(created, kind, source, title, notes, status) VALUES (?,?,?,?,?,?)",
+                              (datetime.now().isoformat(timespec="seconds"), kind, source, title[:120], "[]", "held" if hold else "pending"))
         jid = cur.lastrowid
         path = self.hist_dir / f"{jid}.png"
         img.save(path)

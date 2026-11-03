@@ -48,7 +48,10 @@ def main() -> None:
     power.start()
     sheet = SheetPoller(cfg, svc)
     sheet.start()
-    app = create_app(cfg, svc, poller, cal, button, fan, power, sheet)
+    from .airprint import AirPrintService
+    airprint = AirPrintService(cfg, svc)
+    airprint.start()
+    app = create_app(cfg, svc, poller, cal, button, fan, power, sheet, airprint)
 
     port = int(cfg.data["web"].get("port", 8080))
     log = logging.getLogger("app")

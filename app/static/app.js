@@ -68,7 +68,7 @@ $("#logout").addEventListener("click", async () => { await api("/api/logout", { 
 
 /* ---------------------------------------------------------------- tabs */
 const TABS = [
-  ["dashboard", "Dashboard"], ["print", "Print"], ["form", "Google Form"], ["messages", "Messages"], ["symbols", "Symbols"], ["power", "Power & fan"], ["templates", "Templates"], ["email", "Email"], ["calendar", "Calendar"],
+  ["dashboard", "Dashboard"], ["print", "Print"], ["form", "Google Form"], ["airprint", "AirPrint"], ["messages", "Messages"], ["symbols", "Symbols"], ["power", "Power & fan"], ["templates", "Templates"], ["email", "Email"], ["calendar", "Calendar"],
   ["text", "Text & sorting"], ["aireview", "AI review"], ["rules", "Rules"], ["printer", "Printer"], ["integrations", "Integrations"],
   ["playground", "Try it"], ["account", "Account"],
 ];
@@ -79,7 +79,7 @@ function renderTabs() {
 function go(tab) {
   TAB = tab; clearInterval(POLL); POLL = null; renderTabs();
   const main = $("#main"); main.replaceChildren();
-  ({ dashboard, print: printPage, form: formPage, aireview: aiReviewPage, messages, symbols, power: powerPage, templates, email: () => simple("email", "Email account"), calendar, text: () => simple("text", "Text, dates & summaries"),
+  ({ dashboard, print: printPage, form: formPage, airprint: airprintPage, aireview: aiReviewPage, messages, symbols, power: powerPage, templates, email: () => simple("email", "Email account"), calendar, text: () => simple("text", "Text, dates & summaries"),
      rules, printer: () => simple("printer", "Printer"), integrations, playground, account }[tab])(main);
   window.scrollTo(0, 0);
 }
@@ -909,4 +909,42 @@ function aiReviewPage(main) {
     for (const run of r.runs) api(`/api/ai-runs/${run.id}`).then(full => { const el = document.getElementById(`ai-in-${run.id}`); if (el) el.textContent = full.email; }).catch(() => {});
   }
   load();
+}
+
+
+/* ---------------------------------------------------------------- AirPrint: share the printer on the network */
+function airprintPage(main) {
+  const status = h("div", { class: "small" }), recent = h("div", { class: "small" }), result = h("div", { class: "small", style: "margin-top:8px" });
+  async function refresh() {
+    const s = await api("/api/airprint");
+    const on = CFG.airprint.enabled;
+    const colour = s.state === "ok" ? "var(--ok)" : s.state === "error" ? "var(--bad)" : "var(--muted)";
+    status.replaceChildren(...[
+      h("div", { style: `font-weight:600;color:${colour}` }, !on ? "AirPrint is OFF. Tick “Share the printer on my network”, then Save." : (s.message || s.state)),
+      s.url ? h("div", {}, "Address (if a device asks): ", h("code", {}, s.url)) : null,
+      s.last_job ? h("div", { class: "muted" }, `Last print job: ${s.last_job}`) : null,
+      ...(s.warnings || []).map(w => h("div", { style: "color:var(--warn)" }, "⚠ " + w)),
+      s.pdf === false ? h("div", { style: "color:var(--warn)" }, "⚠ PDF printing needs the pypdfium2 package. Run the update command (it installs it).") : null].filter(Boolean));
+    recent.replaceChildren(...(s.recent && s.recent.length ? [h("strong", {}, "Recent AirPrint pages"), ...s.recent.map(j => h("div", {}, `${j.created.slice(5, 16).replace("T", " ")}  ${j.title}  `, h("span", { class: "badge " + j.status }, j.status)))] : []));
+  }
+  refresh(); POLL = setInterval(() => refresh().catch(() => {}), 5000);
+
+  main.append(h("div", { class: "card" }, h("h2", {}, "AirPrint: print to this printer from your other devices"),
+    h("p", { class: "small" }, "Switch this on and the receipt printer appears in the print dialog of iPhones, iPads, Macs, Windows PCs and Android devices on your network, as if it were plugged into them. ",
+      "Whatever they send (a PDF, a photo, a web page, a note) is trimmed of blank space, scaled to the 72 mm paper and added to the same print queue as your emails and form messages."),
+    status, recent, result,
+    h("div", { class: "row", style: "margin-top:8px" },
+      h("button", { class: "btn", onclick: async () => {
+        if (dirty) return toast("Save your changes first, then test.", true);
+        result.textContent = "Testing…"; result.style.color = "";
+        const r = await api("/api/airprint-test", { method: "POST" }); result.textContent = r.message; result.style.color = r.ok ? "var(--ok)" : "var(--bad)";
+      } }, "Test it"))));
+  main.append(h("div", { class: "card" }, h("h3", {}, "Settings"), form(SCHEMA.sections.airprint)));
+  main.append(h("div", { class: "card" }, h("h3", {}, "How to print to it"),
+    h("ul", { class: "small" },
+      h("li", {}, h("strong", {}, "iPhone / iPad: "), "Share or ⋯ → Print → Select Printer → the printer's name. Pick any paper size (4×6 in or A6 reads best); it is scaled to the paper width."),
+      h("li", {}, h("strong", {}, "Mac: "), "File → Print → Printer → Nearby Printers. If it isn't listed: System Settings → Printers & Scanners → + → the IP tab, address ", h("code", {}, "<the address above without ipp://>"), ", protocol IPP, queue ", h("code", {}, "ipp/print"), "."),
+      h("li", {}, h("strong", {}, "Windows 10/11: "), "Settings → Bluetooth & devices → Printers & scanners → Add device. If it doesn't appear: “Add manually” → “Select a shared printer by name” → ", h("code", {}, "http://<the Pi's address>:631/ipp/print"), "."),
+      h("li", {}, h("strong", {}, "Android: "), "it finds the printer by itself (Settings → Connected devices → Printing → Default Print Service), then use Print from any app.")),
+    h("p", { class: "small muted" }, "Only devices on your own network can print (turn that off in Settings at your own risk). It's plain IPP, not encrypted, which is fine on a home network. I built this without a real iPhone/Mac/PC to test against, so if one doesn't find it or prints oddly, tell me which and what happened.")));
 }
