@@ -271,6 +271,11 @@ ACTIONS                    <- everything to DO: your own notes first, then what 
 * **`include image`** (or `[image]`, `add the photo`, `attach pictures` ...) anywhere in your notes prints the pictures that came with
   the forwarded email, under the summary. Without it, no pictures print. Signature logos and tiny tracking pixels are never printed. The
   phrase itself is removed from your ACTIONS list. If you ask and the email has no usable picture, the history note says so.
+* **`[images attached]`** (also `[all images]`, `[attached images]`, "include all images") prints **every** picture in the forwarded email, including small ones
+  and inline ones, not just the "real" attachments. The only pictures it leaves out are ones it **knows** are a signature: those sitting after a sign-off
+  such as "Kind regards,", "Thanks, Dave" or "Sent from my iPhone" in the same message (older messages in the thread are judged the same way), and invisible
+  1-pixel trackers. A picture it can't place (no sign-off nearby) is kept. Identical copies are printed once. The history note says what was printed and what
+  was left out ("left out 3 picture(s) it knew were in a signature at the bottom"). Up to 8 pictures (*Max pictures for [images attached]*).
 * **`[full]`** prints the whole message instead of a summary (capped at 2,500 characters, adjustable).
 * **Symbols still work** in the same notes: `[work] [!] [reply by friday]`.
 * **Signatures never print.** Before anything is summarised or printed, the box removes sign-offs and contact blocks ("Kind regards, Dave /
@@ -305,18 +310,29 @@ in seconds, and those are far better at understanding a whole email thread than 
 and raise *AI: worked examples shown first* to 3 or 4.
 
 ### Symbols picked for you (only when it's sure)
-A forwarded-email printout gets **1 to 3 hand-drawn symbols** (Accountant, Home, Health, Holiday ...) when they clearly fit, and **none when there's any doubt**
-(*Text & sorting -> Pick 1-3 symbols for forwarded emails*). The rules, strictest first:
-* **Symbols you type always win.** If your note has `[school]` (or any symbol tag), nothing is added.
-* **The email must contain evidence.** Each symbol has a library of roughly 600 words and phrases ("blood test", "performance review", "tax invoice", "g-code",
-  "give me a call", "boarding pass" ...). One stray word is never enough: a symbol needs about two different clues (a clue in the subject counts double).
-* **With AI mode on**, the AI is also told what each symbol covers and proposes up to 3 (or `SYMBOLS: none`). *None* is final. A proposal is only accepted if the
-  email has evidence for it, so it can't invent a symbol; it can only choose between ones the email supports.
-* The abstract symbols (!, ?, star, idea, email, clock, done) are never picked automatically. At most 3, and a second or third must be nearly as well supported as the first.
-* Your own custom symbols (and any extra tag words you added to a built-in symbol on the Symbols tab) count as clues too.
+A forwarded-email printout gets **1 to 3 hand-drawn symbols** (Money, Home, Health, Holiday, the work briefcase ...) when they clearly fit, and **none when there's
+any doubt** (*Text & sorting -> Pick 1-3 symbols for forwarded emails*). Each symbol has a profile of the emails it belongs on, built from what those emails look
+like: **who sends them, what the subject says, what the body says, and the tone**.
 
-History notes say what was chosen ("symbols chosen: Accountant, Money") or "symbols left out" when the AI guessed something the email didn't back up. On the
-**AI review** tab you can correct the symbols for each summary, and your corrections are shown to the model as part of the worked examples.
+| Clue | Examples | Weight |
+|---|---|---|
+| **Subject** (the strongest) | `Payment received`, `Receipt for your order`, `Appointment reminder`, `Tax invoice`, `Flight retimed`, `Excursion permission slip` | one clear subject clue is enough on its own |
+| **Sender** | `Northside Primary School`, `Dr Patel Medical Centre`, `Qantas`, `Ray White Real Estate`, `Commonwealth Bank`, `Petbarn` | also enough on its own |
+| **Body** | "blood test", "boarding pass", "performance review", "g-code", "give me a call", "bring a plate" | strong phrases 2 points, weak hints 1; needs two clues |
+| **Tone** | "Dear Mr Chen", "Please find attached", "do not hesitate to contact", "Pty Ltd", "General Manager" | a clearly **formal / business letter** earns the **briefcase**; casual ("hey", "lol", "cheers mate") counts against |
+
+About 1,500 words and phrases across the 17 symbols; the reasoning for each is written beside it in `app/autosymbols.py` (who sends these emails, what the subject looks
+like, what to avoid), so you can read it, tighten it or add your own.
+* **Symbols you type always win.** If your note has `[school]` (or any symbol tag), nothing is added.
+* **With AI mode on**, the AI is shown only a **shortlist**: the few symbols that have some evidence in *this* email, each with a plain description of the emails it suits and
+  typical subjects. It proposes up to 3, or `SYMBOLS: none`. *None* is final, and a proposal is accepted only if the email backs it up, so it can't invent one.
+* **Without the AI** (or if it didn't follow the format), the clues alone must be convincing: 4+ points and a subject/sender/tone anchor or two different clues.
+* Overlapping clues aren't counted twice. A weaker symbol is kept if it's nearly as well supported *or* has its own clear subject clue (a "Receipt" subject keeps Money
+  on a shop's order email). At most 3. The abstract symbols (!, ?, star, idea, email, clock, done) are never picked automatically.
+* Your own custom symbols (name and tags) and any extra tag words you added to a built-in symbol count as subject-level clues.
+
+History notes say why: `symbols chosen: Money (subject 'payment received'), Work (formal tone)`, or "symbols left out" when the AI guessed something the email didn't back up.
+On the **AI review** tab you can correct the symbols for each summary, and your corrections are shown to the model as part of the worked examples.
 `python -m app.evaluate` also reports **symbols safe**: the share of the 10 test emails where nothing unacceptable was chosen.
 
 ### AI review: keep the history, correct it, feed it back

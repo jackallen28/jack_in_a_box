@@ -36,6 +36,8 @@ class Incoming:
     fwd_date: str = ""
     images: list[Image.Image] = field(default_factory=list)
     fwd_images: list[Image.Image] = field(default_factory=list)   # pictures in a FORWARDED email (printed only if you say "include image")
+    fwd_all_images: list[Image.Image] = field(default_factory=list)   # ...EVERY picture in it, minus ones known to be a signature (for "[images attached]")
+    fwd_signature_skipped: int = 0      # how many pictures were left out of fwd_all_images because they sit in a signature
     auth_ok: bool = True
     guessed_forward: bool = False       # "Fwd:" subject but no forward marker: split note/forward by a guess
 
@@ -43,13 +45,18 @@ class Incoming:
 class _HTMLText(HTMLParser):
     BLOCK = {"p", "div", "br", "tr", "li", "h1", "h2", "h3", "h4", "h5", "h6", "table", "ul", "ol", "blockquote"}
 
-    def __init__(self):
+    def __init__(self, mark_images: bool = False):
         super().__init__(convert_charrefs=True)
         self.out: list[str] = []
         self.skip = 0
+        self.mark_images = mark_images        # leave "\ue000cid\ue001" where a cid: picture sits (to tell where it is in the message)
 
     def handle_starttag(self, tag, attrs):
-        if tag in ("script", "style", "head", "title"):
+        if tag == "img" and self.mark_images and not self.skip:
+            src = dict(attrs).get("src") or ""
+            if src.lower().startswith("cid:"):
+                self.out.append(f"\n\ue000{src[4:].strip().strip('<>')}\ue001\n")
+        elif tag in ("script", "style", "head", "title"):
             self.skip += 1
         elif tag in self.BLOCK:
             self.out.append("\n")
@@ -69,13 +76,41 @@ class _HTMLText(HTMLParser):
             self.out.append(data)
 
 
-def html_to_text(html: str) -> str:
-    p = _HTMLText()
+def html_to_text(html: str, mark_images: bool = False) -> str:
+    p = _HTMLText(mark_images)
     p.feed(html)
     text = "".join(p.out)
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n[ \t]+", "\n", text)
     return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+# A picture is only treated as a signature graphic when we KNOW it is: it sits after a sign-off line ("Kind regards", "Thanks,", "--",
+# "Sent from my iPhone") within the same message, before the next quoted message starts.  Anything else is kept.
+_SIGN_WORDS = r"(?:(?:kind|best|warm|many|with|my)\s+)?(?:regards|thanks|thank you|cheers|sincerely|best wishes|yours (?:sincerely|faithfully|truly)|best|ta|cheerio)"
+_SIGNOFF = re.compile(
+    rf"^\W*{_SIGN_WORDS}\W*$"                                      # "Kind regards,"
+    rf"|^\W*{_SIGN_WORDS}\s*,\s*[\w'.-]+(?:\s+[\w'.-]+){{0,2}}\W*$"      # "Regards, Dave" / "Thanks, Dave Smith" (needs the comma, so "Thanks for the photos" isn't one)
+    r"|^--\s*$|^sent from my\b|^get outlook for\b|^sent via\b", re.I)
+_BOUNDARY = re.compile(
+    r"^\W*(?:from|sent|date|to|cc|subject)\s*:|^on .{5,140}wrote:\s*$|^-{2,}\s*(?:original|forwarded) message|^_{5,}\s*$|^begin forwarded message", re.I)
+
+
+def signature_cids(html: str) -> tuple[set[str], set[str]]:
+    """(cids of pictures known to be in a signature at the bottom of a message, cids of all other pictures) in an HTML body."""
+    text = html_to_text(html, mark_images=True)
+    sig, other, in_sig = set(), set(), False
+    for line in text.split("\n"):
+        line = line.strip()
+        m = re.fullmatch(r"\ue000(.+?)\ue001", line)
+        if m:
+            (sig if in_sig else other).add(m.group(1).lower())
+            continue
+        if _BOUNDARY.match(line):
+            in_sig = False
+        elif _SIGNOFF.match(line):
+            in_sig = True
+    return sig, other - sig
 
 
 def clean_subject(subject: str, strip_fwd: bool = False) -> str:
@@ -231,7 +266,31 @@ def parse(raw: bytes, *, min_image_px: int = 150, max_images: int = 3) -> Incomi
         inc.body = text.strip()
     inc.subject = clean_subject(raw_subject, strip_fwd=inc.forwarded is not None)
 
-    attached, inline = [], []
+    sig_cids: set[str] = set()                         # pictures we KNOW sit in a signature (after a sign-off, in the HTML)
+    for part in msg.walk():
+        if part.get_content_type() == "text/html":
+            try:
+                sig_cids |= signature_cids(part.get_content())[0]
+            except Exception:
+                pass
+    attached, inline, everything, seen_hashes = [], [], [], set()
+    for part in msg.walk():
+        if part.get_content_maintype() == "image" or (
+                part.get_content_type() == "application/octet-stream"
+                and str(part.get_filename() or "").lower().endswith((".heic", ".heif", ".jpg", ".jpeg", ".png"))):
+            try:
+                data = part.get_payload(decode=True) or b""
+            except Exception:
+                data = b""
+            digest = hash(data)
+            if data and digest not in seen_hashes and len(everything) < 40:                  # every picture, once, whatever its size
+                seen_hashes.add(digest)
+                im = _load_image(data, 20)                                                  # only invisible tracking pixels are dropped
+                if im is not None:
+                    cid = str(part.get("Content-ID") or "").strip().strip("<>").lower()
+                    everything.append((im, cid in sig_cids and part.get_content_disposition() != "attachment"))
+    inc.fwd_all_images = [im for im, in_sig in everything if not in_sig]
+    inc.fwd_signature_skipped = sum(1 for _, in_sig in everything if in_sig)
     for part in msg.walk():
         if len(attached) + len(inline) >= max_images * 3:
             break

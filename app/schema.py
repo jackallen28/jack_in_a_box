@@ -135,6 +135,7 @@ SECTIONS = {
         F("email.require_auth_pass", "Reject mail that fails SPF/DKIM checks", "bool", "Stops forged 'From' addresses."),
         F("email.max_cards_per_email", "Max printouts from one email", "number", min=1, max=50),
         F("email.max_images", "Max pictures printed per email", "number", min=0, max=10),
+        F("email.max_all_images", "Max pictures for [images attached]", "number", "[images attached] in your note prints EVERY picture in a forwarded email (even small ones), except ones it knows are a signature at the bottom.", min=1, max=20),
         F("email.min_image_px", "Ignore pictures smaller than (px)", "number", "Skips signature logos and tracking pixels.", min=0, max=2000),
         F("email.subject_only_as_task", "If the body is empty, treat the subject as the reminder", "bool"),
     ],

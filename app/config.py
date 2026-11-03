@@ -158,6 +158,7 @@ DEFAULTS: dict = {
         "require_auth_pass": True,
         "max_cards_per_email": 10,
         "max_images": 3,
+        "max_all_images": 8,        # "[images attached]": how many pictures at most (every picture in the email)
         "min_image_px": 150,
         "subject_only_as_task": True,
     },

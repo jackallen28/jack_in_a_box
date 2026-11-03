@@ -112,11 +112,19 @@ _IMAGE_REQUEST = re.compile(
     re.I)
 
 
-def detect_image_request(notes: str) -> tuple[bool, str]:
-    """Did you say "include image" (anywhere in your note, or as [image])?  Returns (yes/no, note without that phrase)."""
-    if not _IMAGE_REQUEST.search(notes or ""):
-        return False, notes
-    clean = _IMAGE_REQUEST.sub("", notes)
+_ALL_IMAGES = re.compile(
+    rf"\[\s*(?:(?:include|add|with|print|show)\s+)?(?:(?:all|any|every)\s+(?:the\s+)?(?:attached\s+)?{_PIC}|(?:the\s+)?attached\s+{_PIC}|{_PIC}\s+attached|{_PIC}\s+(?:all|any))\s*\]"
+    rf"|\b(?:please\s+)?(?:include|add|attach|print|show)\s+(?:all|any|every)\s+(?:the\s+)?(?:attached\s+)?{_PIC}\b", re.I)
+
+
+def detect_image_mode(notes: str) -> tuple[str | None, str]:
+    """What pictures did you ask for?  ``"all"`` = [images attached] / [all images] / "include all images": scrape every picture in the
+    email (even small ones) except those known to be a signature at the bottom.  ``"some"`` = "include image" / [image]: the email's
+    real pictures.  None = none.  Returns (mode, your note without that phrase)."""
+    mode = "all" if _ALL_IMAGES.search(notes or "") else "some" if _IMAGE_REQUEST.search(notes or "") else None
+    if not mode:
+        return None, notes
+    clean = _IMAGE_REQUEST.sub("", _ALL_IMAGES.sub("", notes))
     clean = re.sub(r"[ \t]{2,}", " ", clean)
     clean = re.sub(r"[ \t]*([,.;:])[ \t]*(?=[,.;:]|\n|$)", r"\1", clean)             # tidy ", ," or " ." left behind
     clean = re.sub(r"(?m)^[ \t]*[,.;:\-]+[ \t]*$", "", clean)
@@ -124,7 +132,13 @@ def detect_image_request(notes: str) -> tuple[bool, str]:
     clean = re.sub(r"(?mi)^(?:and|then|also|plus|but)\s+", "", clean)                         # "and reply by friday" -> "reply by friday"
     clean = re.sub(r"(?mi)[ \t]+(?:and|then|also|plus|but)[ \t]*$", "", clean)
     clean = re.sub(r"(?m)[ \t]*[,;:\-]+[ \t]*$", "", clean)                                   # "chase Dave," -> "chase Dave"
-    return True, re.sub(r"\n{3,}", "\n\n", clean).strip()
+    return mode, re.sub(r"\n{3,}", "\n\n", clean).strip()
+
+
+def detect_image_request(notes: str) -> tuple[bool, str]:
+    """Did you ask for pictures at all ("include image", [image], [images attached] ...)?  Returns (yes/no, note without that phrase)."""
+    mode, rest = detect_image_mode(notes)
+    return mode is not None, rest
 
 
 def has_date(sentence: str) -> bool:

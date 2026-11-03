@@ -12,7 +12,7 @@ from .dates import fmt_when
 from .mailparse import Incoming
 from .models import Card, Section
 from . import aifeedback, autosymbols, emailclean
-from .focus import detect_image_request, find_focus, parse_focus
+from .focus import detect_image_mode, find_focus, parse_focus
 from .summarise import bullets as extractive_bullets
 from .summarise import finish, overview_and_actions, prepare_thread
 from .textproc import _dedupe, build_items, clean_body, fix_text, pop_leading_tags, sort_items, split_blocks
@@ -82,7 +82,7 @@ def thread_labels(thread: list[dict]) -> list[str]:
 
 
 def summarise_thread(thread: list[dict], context: str, cfg: dict, n: int, use_ai: bool = True,
-                     exclude: set | None = None) -> tuple[list[str], list[str], dict]:
+                     exclude: set | None = None, symbol_help: list[str] | None = None) -> tuple[list[str], list[str], dict]:
     """The whole forwarded conversation -> (bullet points, notes for the history, info).
 
     Bullets are short points: what it's about, the key facts, then what to do ("[ ] ..." = an action).  The local AI
@@ -92,8 +92,7 @@ def summarise_thread(thread: list[dict], context: str, cfg: dict, n: int, use_ai
     rest, rest_owners = [sentences[i] for i in keep], [owners[i] for i in keep]
     notes, info, out = [], {}, None
     if cfg["summary"].get("backend") == "ollama" and use_ai and rest:
-        help_ = autosymbols.describe(cfg) if cfg["summary"].get("auto_symbols", True) else None
-        out, info = llm.summarise(rest, n, cfg["llm"], context, rest_owners, thread_labels(thread), help_)
+        out, info = llm.summarise(rest, n, cfg["llm"], context, rest_owners, thread_labels(thread), symbol_help)
         notes.append(f"AI summary ({info['seconds']}s)" if out else f"AI not used: {info['reason']}")
     if not out and rest:
         out = extractive_bullets(rest, n, rest_owners)
@@ -109,10 +108,10 @@ def email_card(inc: Incoming, cfg: dict, now: datetime, use_ai: bool = True) -> 
       [school] / [!]                           symbols, as everywhere else
     Signatures, disclaimers, older replies in the chain, links and logo placeholders are removed first."""
     scfg = cfg["summary"]
-    trace = None
+    trace, sym_ev = None, {}
     n = max(2, min(8, int(scfg.get("sentences", 4))))
     notes_raw = clean_body(inc.body)
-    want_images, notes_raw = detect_image_request(notes_raw)          # "include image" anywhere in your note
+    img_mode, notes_raw = detect_image_mode(notes_raw)               # "include image" / [images attached] anywhere in your note
     notes_raw, focus, want_full = parse_focus(notes_raw, cfg)
 
     # The WHOLE thread, newest message first (each with its own signature removed): the summary and the
@@ -141,13 +140,21 @@ def email_card(inc: Incoming, cfg: dict, now: datetime, use_ai: bool = True) -> 
         sections.append(Section("full", text=text))
     else:
         ctx = f"From: {_name_only(inc.fwd_from)}\nSubject: {inc.subject or inc.fwd_subject}" if inc.fwd_from else f"Subject: {inc.subject}"
-        out, notes, info = summarise_thread(thread, ctx, cfg, n, use_ai, shown)
+        if scfg.get("auto_symbols", True):                  # what the email says about which symbols fit (subject, sender, body, tone)
+            sym_ev = autosymbols.analyse(" ".join(x for x in (inc.fwd_subject, inc.subject) if x), inc.fwd_from or "", message, inc.forwarded or "", cfg)
+        short = autosymbols.candidates(sym_ev)
+        out, notes, info = summarise_thread(thread, ctx, cfg, n, use_ai, shown, autosymbols.describe(cfg, short) if short else None)
         card_notes += notes
         summary_out = out
         trace = {"ctx": ctx, "info": info} if (out and cfg["llm"].get("keep_history", True)) else None
 
     images = []
-    if want_images:
+    if img_mode == "all":                       # [images attached]: every picture in the email, even small ones, minus known signature graphics
+        images = list(inc.fwd_all_images)[: int(cfg["email"].get("max_all_images", 8))]
+        card_notes.append(f"included {len(images)} image(s) (all pictures in the email)" if images else "pictures requested but the email has none")
+        if inc.fwd_signature_skipped:
+            card_notes.append(f"left out {inc.fwd_signature_skipped} picture(s) it knew were in a signature at the bottom")
+    elif img_mode == "some":
         images = list(inc.fwd_images)[: int(cfg["email"].get("max_images", 3))]
         card_notes.append(f"included {len(images)} image(s)" if images else "image requested but the email has none (small logos are ignored)")
 
@@ -181,10 +188,11 @@ def email_card(inc: Incoming, cfg: dict, now: datetime, use_ai: bool = True) -> 
     explicit = _dedupe(s_ids + lead_ids + body_ids)                     # symbols you typed always win
     chosen: list[str] = []
     if not explicit and not want_full and scfg.get("auto_symbols", True) and (message or heading):
-        chosen, ai_ids = autosymbols.pick(f"{heading}\n{message}", heading, cfg, (trace or {}).get("info"))
+        info = (trace or {}).get("info", {})
+        ai_ids = autosymbols.resolve(info["symbols_raw"], cfg) if info.get("used_ai") and info.get("symbols_raw") is not None else None
+        chosen = autosymbols.decide(sym_ev, ai_ids)
         if chosen:
-            names = {c["id"]: c["name"] for c in icon_lib.catalogue(cfg)}
-            card_notes.append("symbols chosen: " + ", ".join(names.get(i, i) for i in chosen))
+            card_notes.append("symbols chosen: " + autosymbols.why(sym_ev, chosen, cfg))
         elif ai_ids:
             card_notes.append("symbols left out: the AI suggested some but the email didn't back them up")
     card = Card(kind="email", heading=heading, subline=subline, sections=sections, icons=explicit or chosen,

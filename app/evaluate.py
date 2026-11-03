@@ -57,9 +57,14 @@ def evaluate(cfg: dict, use_ai: bool = True, cases: int | None = None) -> list[d
     for case in llm.load_examples().get("eval", [])[:cases]:
         thread = [{"sender": m.get("sender", ""), "date": m.get("date", ""), "text": m["text"]} for m in case["messages"]]
         ctx = f"From: {case.get('from', '')}\nSubject: {case.get('subject', '')}"
-        bullets, _notes, info = summarise_thread(thread, ctx, work, int(work["summary"].get("sentences", 4)), use_ai)
-        text = f"{case.get('subject', '')}\n" + " ".join(m["text"] for m in case["messages"])
-        symbols, _ai = autosymbols.pick(text, case.get("subject", ""), work, info) if work["summary"].get("auto_symbols", True) else ([], None)
+        body = " ".join(m["text"] for m in case["messages"])
+        auto = work["summary"].get("auto_symbols", True)
+        ev = autosymbols.analyse(case.get("subject", ""), case.get("from", ""), body, case.get("raw", body), work) if auto else {}
+        short = autosymbols.candidates(ev)
+        bullets, _notes, info = summarise_thread(thread, ctx, work, int(work["summary"].get("sentences", 4)), use_ai, None,
+                                                 autosymbols.describe(work, short) if short else None)
+        ai = autosymbols.resolve(info["symbols_raw"], work) if info.get("used_ai") and info.get("symbols_raw") is not None else None
+        symbols = autosymbols.decide(ev, ai) if auto else []
         out.append(score_case(case, bullets, info, use_ai, symbols))
     return out
 
