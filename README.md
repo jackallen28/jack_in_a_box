@@ -50,19 +50,16 @@ page at the Pi's IP address.
 *Lite* has no desktop, which is exactly the "super basic" mode the AI wants, and **64-bit** is required for the AI (the 32-bit image can't run Ollama).
 Write the card, put it in the Pi, plug in the printer (USB) and the power.
 
-**2. Make a read-only GitHub token** (once; the repo is private): GitHub -> Settings -> Developer settings -> Personal access tokens ->
-*Fine-grained tokens* -> repository `jack_in_a_box`, permission **Contents: Read-only**, expiry 1 year. Copy it.
+**2. SSH in** (give it a minute or two to boot): `ssh YOURUSER@jack-in-a-box.local` (or use the Pi's IP from your router's device list).
 
-**3. SSH in** (give it a minute or two to boot): `ssh YOURUSER@jack-in-a-box.local` (or use the Pi's IP from your router's device list). Then paste:
+**3. Paste this one command:**
 
 ```bash
-sudo apt-get update && sudo apt-get install -y git
-read -rsp "Paste GitHub token: " T; echo
-git clone "https://jackallen28:${T}@github.com/jackallen28/jack_in_a_box.git" && unset T
-bash jack_in_a_box/deploy/install.sh --with-ai --reboot
+curl -fsSL https://raw.githubusercontent.com/jackallen28/jack_in_a_box/main/deploy/bootstrap.sh | bash -s -- --with-ai --reboot
 ```
-That installs everything, sets it to start on every boot, turns on hourly auto-updates, frees RAM for the AI and installs Ollama plus the small model
-(about 10-20 minutes, mostly downloading), then reboots by itself. Drop `--with-ai` (and `--reboot`) if you don't want the AI; you can add it later with
+That downloads the project to `~/jack_in_a_box`, installs everything, sets it to start on every boot, turns on hourly auto-updates, frees RAM
+for the AI and installs Ollama plus the small model (about 10-20 minutes, mostly downloading), then reboots by itself. No account or token is
+needed (the repo is public). Leave off `--with-ai --reboot` for a plain install without the AI; add the AI later with
 `bash ~/jack_in_a_box/deploy/enable-ai.sh`.
 
 **4. In your browser** (a minute after the reboot): `http://jack-in-a-box.local:8080` -> choose a password -> **Printer** tab (*Check connection*, *Print a test
@@ -71,7 +68,7 @@ reminder*) -> **Email** (Gmail address + app password, your addresses) -> **Cale
 
 The AI is installed but **OFF** until you press that button, so the box works with the built-in summary from the first minute.
 
-## Install (Raspberry Pi 3B+ or newer, Raspberry Pi OS)
+## Install on an existing Raspberry Pi OS
 
 One command, run on the Pi (over SSH is fine). It installs everything, sets the app to **start
 automatically every time the Pi boots** (and restart itself if it ever crashes), and starts it now:
@@ -79,36 +76,37 @@ automatically every time the Pi boots** (and restart itself if it ever crashes),
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jackallen28/jack_in_a_box/main/deploy/bootstrap.sh | bash
 ```
+Re-run it any time to update. It also accepts `-s -- --with-ai` (local AI) and `--reboot`, as in *Full setup* above.
 
-**The repo is private**, so the one-liner above won't work (GitHub won't serve the file without a login). Make a read-only
-token once (GitHub → Settings → Developer settings → Personal access tokens → **Fine-grained tokens**: repository
-`jack_in_a_box`, permission **Contents: Read-only**, expiry 1 year), then on the Pi paste it **once**:
+<details><summary>Using a private fork? (needs a read-only token)</summary>
+
+The one-liner can't download from a private repo. Make a read-only token (GitHub -> Settings -> Developer settings -> Personal access
+tokens -> **Fine-grained tokens**: your fork, permission **Contents: Read-only**), then on the Pi paste it **once**:
 
 ```bash
 read -rsp "Paste GitHub token: " T; echo
-git clone "https://jackallen28:${T}@github.com/jackallen28/jack_in_a_box.git" && unset T
+git clone "https://YOURNAME:${T}@github.com/YOURNAME/YOUR_FORK.git" jack_in_a_box && unset T
 bash jack_in_a_box/deploy/install.sh
 ```
 (`read -s` keeps the token out of your shell history.) The installer moves the token into a private file on the Pi
-(`data/.git-credentials`, readable only by you) and removes it from the clone's URL, so it never needs typing again.
+(`data/.git-credentials`, readable only by you) and removes it from the clone's URL. Fine-grained tokens expire: if updates start failing with
+"Couldn't reach GitHub", make a new one and re-run the installer, which will ask for it. The public repo needs none of this.
+</details>
 
 ## Automatic updates
 
-Push to the `jack-in-a-box` branch on GitHub and the Pi picks it up by itself, within about an hour:
+Push to the `main` branch on GitHub and the Pi picks it up by itself, within about an hour:
 
 1. A systemd timer checks GitHub hourly (and 3 minutes after boot).
 2. If there are new commits it switches to them, reinstalls Python packages **only if** `requirements.txt` changed, and restarts the app.
 3. It then waits for the web page to answer. **If it doesn't, it rolls back to the previous version** and won't retry that
    commit until you push a newer one.
-4. Your settings, history and token (`data/`) are never touched.
+4. Your settings and history (`data/`) are never touched.
 
 See the result on the **Account** tab (current version, last check, *Check & update now*), or switch auto-update off there.
 It runs as your normal user; its only extra permission is a sudo rule for exactly two commands (restart this service, start the
 updater). Updates need the git-clone install above, not the ZIP route.
 `journalctl -u jack-in-a-box-update -n 30` shows what it did.
-
-**Token expiry:** fine-grained tokens expire. If updates start failing with "Couldn't reach GitHub", make a new token and re-run
-`bash ~/jack_in_a_box/deploy/install.sh`; it will ask for it.
 
 Updating by hand any time: `bash ~/jack_in_a_box/deploy/update.sh --force`, or re-run the installer
 (your settings and history in `data/` are kept).

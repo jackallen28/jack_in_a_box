@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# One-line installer.  On the Pi (public repo only):
+# One-line installer.  On the Pi:
 #
 #   curl -fsSL https://raw.githubusercontent.com/jackallen28/jack_in_a_box/main/deploy/bootstrap.sh | bash
 #   ...add  -s -- --with-ai  after "bash" to set up local AI summaries too.
 #
-# (If the GitHub repo is private - it is - use the git clone form in the README instead.)
+# (A private fork can't be downloaded this way - see the README for the git clone + token form.)
 # Safe to run again later: it pulls the newest version, reinstalls and restarts the service.
 set -euo pipefail
 
