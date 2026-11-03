@@ -391,3 +391,30 @@ def test_ai_setup_dry_run_on_64_bit(tmp_path):
     r = subprocess.run(["bash", str(ROOT / "deploy/ai-setup.sh")],
                        env={**os.environ, "JIAB_ARCH": "aarch64", "JIAB_DRY_RUN": "1", "JIAB_MEMINFO": str(mem)}, capture_output=True, text=True)
     assert r.returncode == 1 and "too little" in r.stdout
+
+
+def test_enable_ai_installs_everything_but_leaves_ai_off(tmp_path):
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "config.json").write_text(json.dumps({"printer": {"backend": "dummy"}}))
+    before = (data / "config.json").read_text()
+    boot, mem = tmp_path / "config.txt", tmp_path / "meminfo"
+    boot.write_text("gpu_mem=128\n")
+    mem.write_text("MemTotal:         948304 kB\n")
+    env = {**os.environ, "JIAB_ARCH": "aarch64", "JIAB_DRY_RUN": "1", "JIAB_BOOT_CONFIG": str(boot), "JIAB_STATE_DIR": str(tmp_path / "st"),
+           "JIAB_MEMINFO": str(mem), "JACK_IN_A_BOX_DATA": str(data)}
+    r = subprocess.run(["bash", str(ROOT / "deploy/enable-ai.sh")], env=env, capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "gpu_mem=16" in boot.read_text()                                         # lean mode ran
+    assert "ollama pull qwen2.5:0.5b" in r.stdout                                   # model download step ran
+    assert (data / "config.json").read_text() == before                              # the app was NOT switched to AI
+    assert "OFF" in r.stdout and "Switch on AI mode" in r.stdout
+
+
+def test_enable_ai_stops_on_32_bit_without_changing_anything(tmp_path):
+    boot = tmp_path / "config.txt"
+    boot.write_text("gpu_mem=128\n")
+    env = {**os.environ, "JIAB_ARCH": "armv7l", "JIAB_DRY_RUN": "1", "JIAB_BOOT_CONFIG": str(boot), "JIAB_STATE_DIR": str(tmp_path / "st")}
+    r = subprocess.run(["bash", str(ROOT / "deploy/enable-ai.sh")], env=env, capture_output=True, text=True)
+    assert r.returncode == 1 and "Nothing was changed" in r.stdout and "Raspberry Pi Imager" in r.stdout
+    assert boot.read_text() == "gpu_mem=128\n" and not (tmp_path / "st").exists()

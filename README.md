@@ -37,6 +37,40 @@ page at the Pi's IP address.
 | `[reply by friday]` / `[paper due monday]` / `[full]` in your notes above a forward | those answers pulled out of the email under their own headings / the whole message instead of a summary |
 | A Google Calendar event | `EVENT` printout at 7 am the day before (or 7 am the day of, if it was added after the cutoff) |
 
+## Full setup from a blank SD card (recommended: Pi 3B+ with local AI)
+
+**You need:** the Pi 3B+, a microSD card (16 GB+), a good 5 V / 2.5 A power supply, the TM-T82II on USB, and a computer with
+[Raspberry Pi Imager](https://www.raspberrypi.com/software/).
+
+**1. Flash the card.** In Raspberry Pi Imager: *Raspberry Pi Device* = **Raspberry Pi 3**; *Operating System* = *Raspberry Pi OS (other)* ->
+**Raspberry Pi OS Lite (64-bit)**; choose the card; Next -> **Edit settings**:
+* *General:* hostname `jack-in-a-box`, a username + password, your Wi-Fi name/password + country (skip Wi-Fi if you'll use an Ethernet cable), your timezone.
+* *Services:* **Enable SSH** (password authentication).
+
+*Lite* has no desktop, which is exactly the "super basic" mode the AI wants, and **64-bit** is required for the AI (the 32-bit image can't run Ollama).
+Write the card, put it in the Pi, plug in the printer (USB) and the power.
+
+**2. Make a read-only GitHub token** (once; the repo is private): GitHub -> Settings -> Developer settings -> Personal access tokens ->
+*Fine-grained tokens* -> repository `jackallen`, permission **Contents: Read-only**, expiry 1 year. Copy it.
+
+**3. SSH in** (give it a minute or two to boot): `ssh YOURUSER@jack-in-a-box.local` (or use the Pi's IP from your router's device list). Then paste:
+
+```bash
+sudo apt-get update && sudo apt-get install -y git
+read -rsp "Paste GitHub token: " T; echo
+git clone -b jack-in-a-box "https://jackallen28:${T}@github.com/jackallen28/jackallen.git" && unset T
+bash jackallen/jack-in-a-box/deploy/install.sh --with-ai --reboot
+```
+That installs everything, sets it to start on every boot, turns on hourly auto-updates, frees RAM for the AI and installs Ollama plus the small model
+(about 10-20 minutes, mostly downloading), then reboots by itself. Drop `--with-ai` (and `--reboot`) if you don't want the AI; you can add it later with
+`bash ~/jackallen/jack-in-a-box/deploy/enable-ai.sh`.
+
+**4. In your browser** (a minute after the reboot): `http://jack-in-a-box.local:8080` -> choose a password -> **Printer** tab (*Check connection*, *Print a test
+reminder*) -> **Email** (Gmail address + app password, your addresses) -> **Calendar** (iCal link) -> **Messages** (friends, button) ->
+**Text & sorting** -> *Test AI summary*, and when it works press **Switch on AI mode**.
+
+The AI is installed but **OFF** until you press that button, so the box works with the built-in summary from the first minute.
+
 ## Install (Raspberry Pi 3B+ or newer, Raspberry Pi OS)
 
 One command, run on the Pi (over SSH is fine). It installs everything, sets the app to **start
@@ -209,13 +243,14 @@ Optional, and the built-in summary is already decent. The AI rewrites the *rest-
 Expect **roughly 1-3 minutes per forwarded email** on a 3B+. I could not run a real model while building this, so treat that figure
 as an estimate; **Text & sorting -> Test AI summary** tells you the truth on your Pi.
 
-**One-off setup**
-1. **64-bit OS.** Ollama only runs on 64-bit. A 3B+ can, but Raspberry Pi OS is often 32-bit (`uname -m` should say `aarch64`). If not, flash
-   *Raspberry Pi OS Lite (64-bit)* with Raspberry Pi Imager (no desktop = the "super basic" mode), reinstall Jack in a Box, copy your `data/` folder back.
-2. `bash deploy/lean-mode.sh` then reboot: GPU memory to 16 MB, Bluetooth and unused services off, compressed swap (zram). Reversible with `--undo`.
-3. `bash deploy/ai-setup.sh`: installs Ollama, sets it to one model at a time and to free its RAM straight after each use, downloads
+**One-off setup** (already done by `install.sh --with-ai`; to add it to an existing install, run `bash deploy/enable-ai.sh`):
+1. **64-bit OS.** Ollama only runs on 64-bit; `uname -m` should say `aarch64`. If it says `armv7l`, the script stops without changing anything:
+   reflash with *Raspberry Pi OS Lite (64-bit)* (see *Full setup* above), reinstall, copy your `data/` folder back.
+2. `lean-mode.sh` (run by the above): GPU memory to 16 MB, Bluetooth and unused services off, compressed swap (zram). Reversible with `--undo`.
+3. `ai-setup.sh` (run by the above): installs Ollama, sets it to one model at a time and to free its RAM straight after each use, downloads
    `qwen2.5:0.5b` (about 400 MB, the biggest that fits 1 GB).
-4. **Text & sorting** -> Summary engine = *Local AI* -> Save -> *Test AI summary*.
+4. Reboot, then **Text & sorting -> Test AI summary**. When it works, press **Switch on AI mode** (it refuses if the AI isn't ready, and
+   *Switch back to built-in summary* undoes it).
 
 **Why it won't make things up:** a 0.5B model will happily invent facts, so it's never trusted. It only sees a short excerpt (the requests and
 deadlines the ranker picked, plus sender and subject), and every number, date, day/month and name in its answer must appear in the email. Otherwise

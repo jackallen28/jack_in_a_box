@@ -178,14 +178,17 @@ function simple(section, title) {
   if (section === "text") {
     const out = h("div", { class: "small", style: "margin-top:8px" });
     const show = (msg, ok) => { out.textContent = msg; out.style.color = ok === undefined ? "" : ok ? "var(--ok)" : "var(--bad)"; };
+    const on = CFG.summary.backend === "ollama";
     main.append(h("div", { class: "card" }, h("h2", {}, "Local AI summaries (Raspberry Pi 3B+)"),
-      h("p", { class: "small muted" }, "Choose “Local AI” as the summary engine above and Save. The AI only rewrites a short excerpt of the email, requests and deadlines first, and its answer is thrown away (built-in summary used instead) if it mentions anything that isn't in the email. [focus] lookups and [full] never use it."),
+      h("div", { style: "margin:6px 0;font-weight:600;color:" + (on ? "var(--ok)" : "var(--muted)") },
+        on ? "AI mode is ON. (If the AI is off, slow or makes something up, the built-in summary is used instead.)" : "AI mode is OFF: summaries use the built-in method."),
+      h("p", { class: "small muted" }, "Install it once (steps below), press “Test AI summary” to see it work and how long it takes, then “Switch on AI mode”. The AI only rewrites a short excerpt of the email, requests and deadlines first, and its answer is thrown away if it mentions anything that isn't in the email. [focus] lookups and [full] never use it."),
       h("div", { class: "row" },
         h("button", { class: "btn", onclick: async () => {
           show("Checking…"); const r = await api("/api/ai-status");
           show(`${r.message}  (${r.arch}${r.mem_available_mb != null ? `, ${r.mem_available_mb} of ${r.mem_total_mb} MB RAM free` : ""})`, r.ok);
         } }, "Check AI status"),
-        h("button", { class: "btn primary", onclick: async () => {
+        h("button", { class: "btn", onclick: async () => {
           if (dirty) return toast("Save first, then test.", true);
           const r0 = await api("/api/ai-test", { method: "POST" }); show(r0.started ? "Running a sample email through the model - this can take a few minutes on a Pi…" : "A test is already running…");
           const t = setInterval(async () => {
@@ -193,13 +196,20 @@ function simple(section, title) {
             const x = r.result || {};
             show(x.used_ai ? `Worked in ${x.seconds}s:  ${x.summary.join(" ")}` : `AI not used (${x.seconds}s): ${x.reason}`, !!x.used_ai);
           }, 3000);
-        } }, "Test AI summary")), out,
+        } }, "Test AI summary"),
+        h("button", { class: on ? "btn" : "btn primary", onclick: async () => {
+          if (dirty) return toast("Save your changes first.", true);
+          if (on) { CFG.summary.backend = "extractive"; markDirty(); $("#save").click(); return; }
+          show("Checking the AI is ready…"); const r = await api("/api/ai-status");
+          if (!r.ok) return show("Not switched on: " + r.message, false);
+          CFG.summary.backend = "ollama"; markDirty(); $("#save").click();
+        } }, on ? "Switch back to built-in summary" : "Switch on AI mode")), out,
       h("details", { style: "margin-top:12px" }, h("summary", {}, "How to set the Pi up for AI (one-off)"), h("div", { class: "in small" },
         h("ol", {},
           h("li", {}, "A 3B+ must run the 64-bit OS: flash “Raspberry Pi OS Lite (64-bit)” (no desktop) with Raspberry Pi Imager. Check with ", h("code", {}, "uname -m"), " = aarch64."),
           h("li", {}, "Free up RAM (headless, no desktop/Bluetooth, compressed swap): ", h("code", {}, "bash deploy/lean-mode.sh"), " then reboot."),
-          h("li", {}, "Install Ollama and the small model: ", h("code", {}, "bash deploy/ai-setup.sh")),
-          h("li", {}, "Pick “Local AI” above, Save, then press Test AI summary.")),
+          h("li", {}, "Install Ollama and the small model: ", h("code", {}, "bash deploy/ai-setup.sh"), "  (or do steps 2 and 3 together: ", h("code", {}, "bash deploy/enable-ai.sh"), ")"),
+          h("li", {}, "Reboot, press “Test AI summary” here, then “Switch on AI mode”.")),
         "Prefer not to? Point “AI: Ollama address” at another computer on your network instead.")))
     );
   }

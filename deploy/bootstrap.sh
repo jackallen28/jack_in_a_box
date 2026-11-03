@@ -25,4 +25,4 @@ else
   git -C "$DEST" sparse-checkout set jack-in-a-box
 fi
 
-exec bash "$DEST/jack-in-a-box/deploy/install.sh"
+exec bash "$DEST/jack-in-a-box/deploy/install.sh" "$@"

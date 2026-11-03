@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 # Installs the app and makes it start automatically every time the Pi boots.
 # Run from the project folder:   bash deploy/install.sh        (safe to re-run to update)
+#   --with-ai    also set up local AI email summaries (64-bit Pi OS; see deploy/enable-ai.sh)
+#   --no-ai      don't ask about it
+#   --reboot     reboot automatically at the end (needed once after --with-ai)
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+WITH_AI="${JIAB_WITH_AI:-}"; AUTO_REBOOT=0
+for a in "$@"; do case "$a" in --with-ai) WITH_AI=yes ;; --no-ai) WITH_AI=no ;; --reboot) AUTO_REBOOT=1 ;; esac; done
 RUN_USER="${SUDO_USER:-$USER}"
 [[ "$RUN_USER" == "root" ]] && { echo "Run as your normal user (not root); it uses sudo where needed."; exit 1; }
 
@@ -33,6 +38,20 @@ echo "==> Letting '$RUN_USER' use the USB printer (group 'lp') and the button/LE
 sudo usermod -aG lp,gpio "$RUN_USER"
 sudo cp "$DIR/deploy/99-epson-printer.rules" /etc/udev/rules.d/
 sudo udevadm control --reload-rules && sudo udevadm trigger
+
+if [[ -z "$WITH_AI" ]]; then
+  if ( : </dev/tty ) 2>/dev/null; then
+    echo
+    read -rp "Install local AI for email summaries now? (needs 64-bit Pi OS, ~10 min; it stays OFF until you switch it on in the web page) [y/N] " ans </dev/tty || ans=""
+    [[ "$ans" =~ ^[Yy] ]] && WITH_AI=yes || WITH_AI=no
+  else WITH_AI=no; fi
+fi
+AI_STATE="not set up (add it later: bash deploy/enable-ai.sh)"; NEED_REBOOT=0
+if [[ "$WITH_AI" == "yes" ]]; then
+  echo "==> Local AI summaries"
+  if bash "$DIR/deploy/enable-ai.sh"; then AI_STATE="installed but OFF - reboot, then switch it on in the web page (Text & sorting)"; NEED_REBOOT=1
+  else AI_STATE="NOT set up (see the message above). Everything else is installed; retry later: bash deploy/enable-ai.sh"; fi
+fi
 
 echo "==> Installing the start-on-boot service"
 sed -e "s|@USER@|$RUN_USER|g" -e "s|@DIR@|$DIR|g" "$DIR/deploy/jack-in-a-box.service" | \
@@ -66,6 +85,7 @@ if systemctl is-active --quiet jack-in-a-box.service; then STATE="running"; else
 IP="$(hostname -I | awk '{print $1}')"
 echo
 echo "Service: $STATE   |   starts on boot: $(systemctl is-enabled jack-in-a-box.service)   |   auto-update: $AUTO_UPDATE (hourly)"
+echo "Local AI: $AI_STATE"
 echo "Open  http://$IP:8080   (or http://$(hostname).local:8080)  and choose a password."
 echo
 echo "Printer by USB:  plug it in and power it on (nothing else to do)."
@@ -74,3 +94,8 @@ echo "(Only for a printer WITH a network card:  bash $DIR/deploy/printer-etherne
 echo
 echo "Optional: give the Pi a friendly name so you can use http://jack-in-a-box.local:8080 :"
 echo "    sudo hostnamectl set-hostname jack-in-a-box && sudo reboot"
+if [[ "$NEED_REBOOT" == 1 ]]; then
+  echo
+  echo "==> One reboot needed to finish the AI setup:  sudo reboot"
+  if [[ "$AUTO_REBOOT" == 1 ]]; then echo "Rebooting in 10 seconds (Ctrl-C to cancel)..."; sleep 10; sudo reboot; fi
+fi
