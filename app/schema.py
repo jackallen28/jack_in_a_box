@@ -197,6 +197,10 @@ SECTIONS = {
         F("button.led_active_high", "LED lights when the pin is HIGH", "bool", "Turn off if your LED is wired to 3.3 V instead of to GND."),
         F("button.blink_seconds", "Flash speed (seconds on/off)", "number", min=0.1, max=3, step=0.1),
     ],
+    "updates": [
+        F("updates.enabled", "Install updates automatically", "bool",
+          "Checks GitHub hourly. After an update the app restarts and the page is tested; if it doesn't come up it rolls back by itself."),
+    ],
     "general": [
         F("general.history_keep_days", "Keep history for (days)", "number", min=1, max=3650),
     ],

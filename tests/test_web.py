@@ -113,3 +113,25 @@ def test_upload_rejects_non_images(client):
     r = c.post("/api/upload", data={"file": (io.BytesIO(b"not an image"), "x.png")}, headers=H,
                content_type="multipart/form-data")
     assert r.status_code == 400
+
+
+def test_update_status_and_update_now(client, tmp_path, monkeypatch):
+    import subprocess
+    import app.web as web
+    c, *_ = client
+    login(c)
+    monkeypatch.setattr(web, "DATA_DIR", tmp_path)
+    r = c.get("/api/update-status").json
+    assert set(r) == {"version", "status", "git"} and r["status"] is None
+    (tmp_path / "update-status.json").write_text('{"result":"updated","message":"Updated a -> b","checked":"now","commit":"b"}')
+    assert c.get("/api/update-status").json["status"]["message"] == "Updated a -> b"
+
+    ran = []
+    monkeypatch.setattr(web.subprocess, "run", lambda cmd, **kw: ran.append(cmd) or subprocess.CompletedProcess(cmd, 0, "", ""))
+    r = c.post("/api/update-now", headers=H).json
+    assert r["ok"] and (tmp_path / "update-now").exists()                    # the flag that forces an update
+    assert ran[-1] == ["sudo", "-n", "systemctl", "start", "--no-block", "jack-in-a-box-update.service"]
+    (tmp_path / "update-now").unlink()
+    monkeypatch.setattr(web.subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, "", "no"))
+    r = c.post("/api/update-now", headers=H).json
+    assert not r["ok"] and "install.sh" in r["message"] and not (tmp_path / "update-now").exists()

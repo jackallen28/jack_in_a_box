@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import base64
+import json
+import subprocess
 import copy
 import hashlib
 import hmac
@@ -16,7 +18,7 @@ from PIL import Image, ImageOps
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from . import plugins, schema
-from .config import APP_DIR, DATA_DIR, KIND_DEFAULTS, ConfigStore, default_template, merge
+from .config import APP_DIR, DATA_DIR, ROOT, KIND_DEFAULTS, ConfigStore, default_template, merge
 from .mailbox import MailPoller
 from .mailparse import Incoming, _load_image, parse
 from .pipeline import build_cards, local_now, plain_card
@@ -283,6 +285,37 @@ def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button) 
         from .printer import check
         ok, msg = check(cfg.data["printer"])
         return jsonify(ok=ok, message=msg)
+
+    @app.get("/api/update-status")
+    def update_status():
+        def git(*a):
+            try:
+                return subprocess.run(["git", "-C", str(ROOT), *a], capture_output=True, text=True, timeout=5).stdout.strip()
+            except Exception:
+                return ""
+        st = None
+        try:
+            st = json.loads((DATA_DIR / "update-status.json").read_text())
+        except Exception:
+            pass
+        log_line = git("log", "-1", "--format=%h|%cs|%s")
+        h, d, subj = (log_line.split("|", 2) + ["", ""])[:3] if log_line else ("", "", "")
+        return jsonify(version={"commit": h, "date": d, "subject": subj, "branch": git("rev-parse", "--abbrev-ref", "HEAD")},
+                       status=st, git=bool(log_line))
+
+    @app.post("/api/update-now")
+    def update_now():
+        """Ask the systemd updater to check right now (works even if auto-update is off)."""
+        try:
+            (DATA_DIR / "update-now").write_text("1")
+            r = subprocess.run(["sudo", "-n", "systemctl", "start", "--no-block", "jack-in-a-box-update.service"],
+                               capture_output=True, text=True, timeout=10)
+            if r.returncode != 0:
+                (DATA_DIR / "update-now").unlink(missing_ok=True)
+                return jsonify(ok=False, message="Updates aren't set up on this Pi yet - re-run deploy/install.sh once."), 200
+        except Exception as e:
+            return jsonify(ok=False, message=str(e)), 200
+        return jsonify(ok=True, message="Checking for updates…")
 
     @app.post("/api/test-email")
     def test_email():

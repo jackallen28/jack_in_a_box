@@ -44,14 +44,38 @@ automatically every time the Pi boots** (and restart itself if it ever crashes),
 curl -fsSL https://raw.githubusercontent.com/jackallen28/jackallen/jack-in-a-box/jack-in-a-box/deploy/bootstrap.sh | bash
 ```
 
-If the GitHub repo is private, the `curl` won't work; use git instead (it will ask for your login/token):
+**The repo is private**, so the one-liner above won't work (GitHub won't serve the file without a login). Make a read-only
+token once (GitHub → Settings → Developer settings → Personal access tokens → **Fine-grained tokens**: repository
+`jackallen`, permission **Contents: Read-only**, expiry 1 year), then on the Pi paste it **once**:
 
 ```bash
-git clone --depth 1 -b jack-in-a-box https://github.com/jackallen28/jackallen.git
+read -rsp "Paste GitHub token: " T; echo
+git clone -b jack-in-a-box "https://jackallen28:${T}@github.com/jackallen28/jackallen.git" && unset T
 bash jackallen/jack-in-a-box/deploy/install.sh
 ```
+(`read -s` keeps the token out of your shell history.) The installer moves the token into a private file on the Pi
+(`data/.git-credentials`, readable only by you) and removes it from the clone's URL, so it never needs typing again.
 
-Re-run the same command any time to **update** (your settings and history in `data/` are kept).
+## Automatic updates
+
+Push to the `jack-in-a-box` branch on GitHub and the Pi picks it up by itself, within about an hour:
+
+1. A systemd timer checks GitHub hourly (and 3 minutes after boot).
+2. If there are new commits it switches to them, reinstalls Python packages **only if** `requirements.txt` changed, and restarts the app.
+3. It then waits for the web page to answer. **If it doesn't, it rolls back to the previous version** and won't retry that
+   commit until you push a newer one.
+4. Your settings, history and token (`data/`) are never touched.
+
+See the result on the **Account** tab (current version, last check, *Check & update now*), or switch auto-update off there.
+It runs as your normal user; its only extra permission is a sudo rule for exactly two commands (restart this service, start the
+updater). Updates need the git-clone install above, not the ZIP route.
+`journalctl -u jack-in-a-box-update -n 30` shows what it did.
+
+**Token expiry:** fine-grained tokens expire. If updates start failing with "Couldn't reach GitHub", make a new token and re-run
+`bash ~/jackallen/jack-in-a-box/deploy/install.sh`; it will ask for it.
+
+Updating by hand any time: `bash ~/jackallen/jack-in-a-box/deploy/update.sh --force`, or re-run the installer
+(your settings and history in `data/` are kept).
 
 Then:
 1. Open `http://<pi-ip>:8080` (the installer prints it; `http://raspberrypi.local:8080` usually works too).

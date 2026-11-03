@@ -500,7 +500,22 @@ function messages(main) {
 /* ---------------------------------------------------------------- account */
 function account(main) {
   const o = h("input", { type: "password", autocomplete: "current-password" }), n = h("input", { type: "password", autocomplete: "new-password" });
-  main.append(h("div", { class: "card" }, h("h2", {}, "General"), form(SCHEMA.sections.general)),
+  const upd = h("div", { class: "small", style: "margin:8px 0" });
+  async function loadUpdate() {
+    const r = await api("/api/update-status");
+    const v = r.version, st = r.status;
+    upd.replaceChildren(
+      h("div", {}, r.git ? `Version ${v.commit} (${v.date}) on branch “${v.branch}” - ${v.subject}` : "Version unknown (not installed from git)."),
+      st ? h("div", { style: "color:" + (st.result === "error" || st.result === "rolled_back" ? "var(--bad)" : "var(--ok)") },
+        `Last check ${st.checked}: ${st.message}`) : h("div", { class: "muted" }, "No update check has run yet."));
+  }
+  loadUpdate();
+  main.append(h("div", { class: "card" }, h("h2", {}, "Software updates"), form(SCHEMA.sections.updates), upd,
+      h("div", { class: "row" }, h("button", { class: "btn", onclick: async () => {
+        const r = await api("/api/update-now", { method: "POST" }); toast(r.message, !r.ok);
+        if (r.ok) { setTimeout(loadUpdate, 6000); setTimeout(loadUpdate, 30000); }
+      } }, "Check & update now"))),
+    h("div", { class: "card" }, h("h2", {}, "General"), form(SCHEMA.sections.general)),
     h("div", { class: "card" }, h("h2", {}, "Change password"),
       h("div", { class: "f" }, h("label", { class: "l" }, "Current password"), o),
       h("div", { class: "f" }, h("label", { class: "l" }, "New password (6+ characters)"), n),

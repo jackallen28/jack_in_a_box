@@ -1,0 +1,10 @@
+[Unit]
+Description=Jack in a Box - hourly update check
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=1h
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,11 @@
+[Unit]
+Description=Jack in a Box - check GitHub for updates
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=@USER@
+Environment=JACK_IN_A_BOX_DATA=@DIR@/data
+ExecStart=@DIR@/deploy/update.sh
+TimeoutStartSec=900

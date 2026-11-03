@@ -201,6 +201,7 @@ DEFAULTS: dict = {
         "skip_all_day": False,
         "notes_chars": 300,
     },
+    "updates": {"enabled": True},
     "calendars": [],
     # People allowed to send you messages.  Their emails become MESSAGE printouts that wait
     # for the button (unless "bypass_queue" is on for that person).
