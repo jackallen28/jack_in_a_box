@@ -152,3 +152,20 @@ def test_lean_mode_leaves_existing_compressed_swap_alone(tmp_path):
     assert r.returncode == 0 and "already active" in r.stdout and "would install zram-tools" not in r.stdout
     r = subprocess.run(["bash", str(ROOT / "deploy/lean-mode.sh")], env={**base, "JIAB_ZRAM_ACTIVE": "no"}, capture_output=True, text=True)
     assert r.returncode == 0 and "would install zram-tools" in r.stdout
+
+
+def test_printer_ethernet_check_mode_reports_whether_the_printer_answers():
+    import socket
+    import threading
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(5)
+    port = srv.getsockname()[1]
+    threading.Thread(target=lambda: srv.accept()[0].close(), daemon=True).start()
+    run = lambda *a: subprocess.run(["bash", str(ROOT / "deploy/printer-ethernet.sh"), *a], capture_output=True, text=True)
+    r = run("--check", "127.0.0.1", str(port))
+    assert r.returncode == 0 and "answered" in r.stdout and "Connection = Network" in r.stdout
+    r = run("--check", "127.0.0.1", "1")                                       # nothing listens on port 1
+    assert r.returncode == 1 and "!!" in r.stdout
+    r = run("--check", "203.0.113.9", "9100")                                  # unroutable test address: no answer
+    assert r.returncode == 1 and "No answer" in r.stdout and "self-test" in r.stdout

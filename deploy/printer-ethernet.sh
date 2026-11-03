@@ -10,6 +10,24 @@
 # going over Wi-Fi (wlan0). Nothing else is changed.
 set -euo pipefail
 
+# Does a printer answer at HOST (raw printing port 9100)?   bash printer-ethernet.sh --check 192.168.192.168
+probe() {
+  local host="$1" port="${2:-9100}"
+  if timeout 3 bash -c "exec 3<>/dev/tcp/$host/$port" 2>/dev/null; then
+    echo "   OK  The printer answered at $host:$port."
+    echo "       Now: web page -> Printer tab -> Connection = Network, Network printer IP = $host, Save, 'Check connection'."
+    return 0
+  fi
+  if ping -c 1 -W 2 "$host" >/dev/null 2>&1; then
+    echo "   !!  $host replies to ping but nothing is listening on port $port. Is it the right device / is raw printing enabled?"
+  else
+    echo "   !!  No answer from $host. Check: printer switched on, cable firmly in both ends (try another cable),"
+    echo "       and that the printer's self-test page (hold FEED while powering on) shows IP $host."
+  fi
+  return 1
+}
+if [[ "${1:-}" == "--check" ]]; then probe "${2:?usage: $0 --check HOST [PORT]}" "${3:-9100}"; exit $?; fi
+
 PI_IP="${1:-192.168.192.1}"
 IFACE="${IFACE:-eth0}"
 NET="${PI_IP%.*}"
@@ -47,6 +65,12 @@ fi
 
 echo
 echo "Pi Ethernet ($IFACE) is now $PI_IP/24 with no default route; Wi-Fi is unchanged."
+echo
+if [[ "$PI_IP" == 192.168.192.* ]]; then
+  echo "Checking for the printer at its default address 192.168.192.168 (waiting for the network link)..."
+  sleep 6
+  probe 192.168.192.168 9100 || true
+fi
 echo
 echo "Next:"
 echo "  1. Cable Pi Ethernet -> printer Ethernet, power the printer on."
