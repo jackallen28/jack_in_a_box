@@ -330,9 +330,13 @@ def test_the_apps_script_itself_behaves():
     assert o["noToken"]["ok"] is False and o["wrongToken"]["ok"] is False and "token" in o["wrongToken"]["error"]
     assert o["ping"]["ok"] and o["ping"]["rows"] == 5
     rows = o["rows"]["rows"]
-    assert o["rows"]["headers"] == ["Timestamp", "Email Address", "Body", "Image"]
+    assert o["rows"]["headers"] == ["Timestamp", "Email Address", "Body", "Image", "Schedule Send (DATE)", "Schedule Send (TIME)"]
+    assert o["rows"]["timezone"] == "Australia/Sydney"
     assert [r["values"]["Body"] for r in rows] == ["first", "second", "third", "fourth"]           # the blank row is skipped
-    assert rows[0]["values"]["Timestamp"] == "2026-11-03T01:00:00.000Z" and len({r["id"] for r in rows}) == 4
+    assert rows[0]["values"]["Timestamp"] == "2026-11-03T12:00:00" and len({r["id"] for r in rows}) == 4      # written in the sheet's own timezone
+    assert rows[1]["values"]["Schedule Send (DATE)"] == "2026-11-05T00:00:00"                                    # a date-only answer: midnight of that day
+    assert rows[1]["values"]["Schedule Send (TIME)"] == "5:30:00 PM"                                             # a time-only answer: as displayed
+    assert rows[0]["values"]["Schedule Send (DATE)"] == "" and rows[0]["values"]["Schedule Send (TIME)"] == ""
     assert o["file"] == {"ok": True, "name": "pic.png", "mime": "image/png", "data": base64.b64encode(bytes([137, 80, 78, 71])).decode()}
     assert o["badFileId"]["ok"] is False and o["missingFile"]["ok"] is False
     assert o["hugeFile"]["ok"] is False and "too big" in o["hugeFile"]["error"]
@@ -456,3 +460,130 @@ def test_rows_an_older_version_left_waiting_for_the_button_are_released_but_emai
     svc.db.execute("UPDATE jobs SET status='held' WHERE title='form'")
     poller.poll_once()
     assert {j["title"]: j["status"] for j in jobs(svc)}["form"] == "held"                          # by-sender mode leaves it alone
+
+
+# ----------------------------------------------------------------------------- "Schedule Send (DATE)" / "Schedule Send (TIME)"
+from datetime import datetime as _dt  # noqa: E402
+from zoneinfo import ZoneInfo  # noqa: E402
+
+SYD = ZoneInfo("Australia/Sydney")
+SCHED_HEADERS = [*HEADERS, "Schedule Send (DATE)", "Schedule Send (TIME)"]
+
+
+class Clock(_dt):
+    value = None
+
+    @classmethod
+    def now(cls, tz=None):
+        return cls.value.astimezone(tz) if tz else cls.value.replace(tzinfo=None)
+
+
+@pytest.fixture()
+def sched(env, monkeypatch):
+    """The form has the two schedule columns, and the clock reads Tuesday 3 Nov 2026, 10:05 (the row is sent at 10:00)."""
+    cfg, svc, poller, seen = env
+    Fake.headers_row = list(SCHED_HEADERS)
+    Clock.value = _dt(2026, 11, 3, 10, 5, tzinfo=SYD)
+    monkeypatch.setattr(sheet_mod, "datetime", Clock)
+    return cfg, svc, poller, seen
+
+
+def srow(date="", time="", **kw):
+    return [*row(**kw), date, time]
+
+
+def at(y, mo, d, h, mi):
+    Clock.value = _dt(y, mo, d, h, mi, tzinfo=SYD)
+
+
+def test_no_schedule_means_print_straight_away(sched):
+    cfg, svc, poller, seen = sched
+    Fake.rows = [srow(heading="Now", body="walk the dog")]
+    assert poller.poll_once() == 1 and len(jobs(svc)) == 1 and poller.status["scheduled"] == 0
+
+
+def test_a_future_date_and_time_waits_in_the_sheet_then_prints_at_that_moment(sched):
+    cfg, svc, poller, seen = sched
+    Fake.rows = [srow("2026-11-05T00:00:00", "5:30:00 PM", heading="Thursday thing", body="bring the form")]
+    assert poller.poll_once() == 0 and jobs(svc) == []
+    assert len(Fake.rows) == 1 and deletes() == []                                  # still safely in the sheet
+    assert poller.status["scheduled"] == 1 and poller.status["next_scheduled"] == "Thu 05 Nov 17:30"
+    at(2026, 11, 5, 17, 29)
+    assert poller.poll_once() == 0 and jobs(svc) == []                              # one minute early: still waiting
+    at(2026, 11, 5, 17, 30)                                                         # "at that point in time" = print now
+    assert poller.poll_once() == 1 and len(jobs(svc)) == 1
+    assert any("scheduled for Thu 05 Nov 17:30" in n for n in seen[0][0].notes)
+    svc.process_pending()
+    poller.reap()
+    assert Fake.rows == [] and poller.status["scheduled"] == 0
+
+
+def test_a_scheduled_moment_in_the_past_prints_straight_away(sched):
+    cfg, svc, poller, seen = sched
+    Fake.rows = [srow("2026-11-01T00:00:00", "9:00 AM", body="late one")]
+    assert poller.poll_once() == 1 and len(jobs(svc)) == 1
+
+
+def test_time_only_uses_the_day_the_form_was_sent(sched):
+    cfg, svc, poller, seen = sched
+    Fake.rows = [srow("", "17:30", heading="Tonight", body="take the bins out")]       # sent today 10:00 -> today 5:30pm
+    assert poller.poll_once() == 0 and poller.status["next_scheduled"] == "Tue 03 Nov 17:30"
+    at(2026, 11, 3, 17, 31)
+    assert poller.poll_once() == 1
+
+
+def test_time_only_that_has_already_passed_today_prints_now(sched):
+    cfg, svc, poller, seen = sched
+    Fake.rows = [srow("", "9:00:00 AM", body="too late for that")]
+    assert poller.poll_once() == 1
+
+
+def test_the_date_is_taken_from_when_the_form_was_sent_not_from_when_the_pi_looked(sched):
+    cfg, svc, poller, seen = sched
+    at(2026, 11, 4, 8, 0)                                                            # the Pi first sees it the next morning
+    Fake.rows = [srow("", "17:30", ts="2026-11-03 10:00:00", body="sent yesterday for 5:30pm")]
+    assert poller.poll_once() == 1                                                   # yesterday 5:30pm is past -> now
+
+
+def test_date_only_waits_for_the_morning_print_time_and_today_means_now(sched):
+    cfg, svc, poller, seen = sched
+    Fake.rows = [srow("2026-11-06T00:00:00", "", body="Friday job"), srow("2026-11-03T00:00:00", "", body="today job")]
+    assert poller.poll_once() == 1                                                   # today's prints now, Friday's waits
+    assert poller.status["scheduled"] == 1 and poller.status["next_scheduled"] == "Fri 06 Nov 07:00"
+    at(2026, 11, 6, 7, 0)
+    assert poller.poll_once() == 1 and len(jobs(svc)) == 2
+
+
+def test_other_date_formats_from_a_text_column_work(sched):
+    cfg, svc, poller, seen = sched
+    Fake.rows = [srow("5/11/2026", "5pm", body="typed by hand")]
+    assert poller.poll_once() == 0 and poller.status["next_scheduled"] == "Thu 05 Nov 17:00"
+
+
+def test_an_unreadable_schedule_prints_now_and_says_so(sched):
+    cfg, svc, poller, seen = sched
+    Fake.rows = [srow("whenever", "", body="no idea when")]
+    assert poller.poll_once() == 1
+    assert any("couldn't read the schedule" in n for n in seen[0][0].notes)
+
+
+def test_scheduled_rows_do_not_block_ones_behind_them_and_the_loop_knows_when_to_wake(sched):
+    cfg, svc, poller, seen = sched
+    Fake.rows = [srow("2026-11-09T00:00:00", "8:00 AM", body="next Monday"), srow(body="print me now")]
+    assert poller.poll_once() == 1 and len(jobs(svc)) == 1
+    assert poller._next_due == _dt(2026, 11, 9, 8, 0, tzinfo=SYD)
+
+
+def test_the_sheets_own_timezone_is_used_when_google_reports_it(sched, monkeypatch):
+    cfg, svc, poller, seen = sched
+    due, _ = sheet_mod.schedule_due({"Timestamp": "2026-11-03T10:00:00", "Schedule Send (DATE)": "2026-11-05T00:00:00",
+                                     "Schedule Send (TIME)": "9:00 AM"}, sheet_mod.detect_columns(SCHED_HEADERS), cfg.data, "America/New_York")
+    assert due.isoformat() == "2026-11-05T09:00:00-05:00"
+
+
+def test_schedule_columns_are_recognised_and_not_mistaken_for_the_body():
+    cols = detect_columns(["Timestamp", "Heading", "Body", "Schedule Send (DATE)", "Schedule Send (TIME)"])
+    assert cols["sched_date"] == "Schedule Send (DATE)" and cols["sched_time"] == "Schedule Send (TIME)"
+    assert cols["body"] == "Body" and cols["stamp"] == "Timestamp"
+    only = detect_columns(["Timestamp", "Heading", "Note", "Send time"])
+    assert only["sched_time"] == "Send time" and only["sched_date"] is None and only["body"] == "Note"

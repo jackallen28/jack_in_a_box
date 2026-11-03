@@ -250,11 +250,16 @@ def _section_image(sec: Section, tpl: dict, w: int) -> Image.Image | None:
         indent = box + int(size * 0.5)
         rows = []
         for it in sec.items:
-            tb = text_block(it, font_id, size, w - indent)
+            action = it.startswith("[ ] ")
+            tb = text_block(it[4:] if action else it, font_id, size, w - indent)
             row = Image.new("L", (w, max(tb.height, lh)), 255)
             d = ImageDraw.Draw(row)
             top = int((lh - box) / 2)
-            if b.get("checkbox_actions", True):
+            if sec.bullets and not action:
+                r = max(3, box // 5)                                     # a round bullet for information points
+                cx, cy = box // 2, top + box // 2
+                d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=0)
+            elif action or b.get("checkbox_actions", True):
                 d.rectangle([1, top, box, top + box - 1], outline=0, width=2)
             else:
                 d.rectangle([2, top + box // 2 - 1, box - 2, top + box // 2 + 1], fill=0)

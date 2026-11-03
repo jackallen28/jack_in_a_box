@@ -39,29 +39,44 @@ function sheet_() {
   return s;
 }
 
-function cell_(v) {
+// A cell as plain text.  Dates are written in the SPREADSHEET'S own timezone ("2026-11-05T17:30:00") so Jack in a Box
+// can read the "Schedule Send" answers; a time-only answer (Google stores it as a date in 1899) is sent as it is displayed.
+function cell_(v, shown, tz) {
+  if (v instanceof Date) {
+    if (v.getFullYear() < 1900) return String(shown || '');
+    return Utilities.formatDate(v, tz, "yyyy-MM-dd'T'HH:mm:ss");
+  }
+  return String(v === null || v === undefined ? '' : v);
+}
+
+// The older text of a cell, used ONLY to fingerprint rows - it must never change, or rows already waiting to be
+// deleted would look like new rows.
+function raw_(v) {
   return v instanceof Date ? v.toISOString() : String(v === null || v === undefined ? '' : v);
 }
 
 // A short fingerprint of a row, so the same row can be found again later even after other rows were deleted.
 function id_(row) {
-  const bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, row.map(cell_).join('␟'));
+  const bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, row.map(raw_).join('␟'));
   return Utilities.base64EncodeWebSafe(bytes).slice(0, 16);
 }
 
 function rows_(sheet) {
-  const data = sheet.getDataRange().getValues();
-  if (data.length < 1) return { ok: true, headers: [], rows: [] };
-  const headers = data[0].map(cell_);
+  const range = sheet.getDataRange();
+  const data = range.getValues();
+  const shown = range.getDisplayValues();
+  const tz = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone();
+  if (data.length < 1) return { ok: true, headers: [], rows: [], timezone: tz };
+  const headers = data[0].map(function (c, j) { return cell_(c, shown[0][j], tz); });
   const rows = [];
-  for (let i = 1; i < data.length && rows.length < 50; i++) {
+  for (let i = 1; i < data.length && rows.length < 200; i++) {
     const r = data[i];
-    if (r.every(function (c) { return cell_(c).trim() === ''; })) continue;     // skip blank rows
+    if (r.every(function (c) { return raw_(c).trim() === ''; })) continue;      // skip blank rows
     const values = {};
-    headers.forEach(function (h, j) { values[h] = cell_(r[j]); });
+    headers.forEach(function (h, j) { values[h] = cell_(r[j], shown[i][j], tz); });
     rows.push({ id: id_(r), values: values });
   }
-  return { ok: true, headers: headers, rows: rows };
+  return { ok: true, headers: headers, rows: rows, timezone: tz };
 }
 
 function file_(id) {

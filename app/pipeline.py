@@ -12,8 +12,9 @@ from .dates import fmt_when
 from .mailparse import Incoming
 from .models import Card, Section
 from . import emailclean
-from .focus import find_focus, parse_focus
-from .summarise import finish, pick, prepare_thread
+from .focus import detect_image_request, find_focus, parse_focus
+from .summarise import bullets as extractive_bullets
+from .summarise import finish, prepare_thread
 from .textproc import _dedupe, build_items, clean_body, fix_text, pop_leading_tags, sort_items, split_blocks
 
 
@@ -66,6 +67,32 @@ def _cap(text: str, limit: int) -> str:
     return text[:limit].rsplit(" ", 1)[0].rstrip(",;:") + " ... (cut short)"
 
 
+def thread_labels(thread: list[dict]) -> list[str]:
+    out = []
+    for i, m in enumerate(thread):
+        who = ", ".join(x for x in (m.get("sender"), m.get("date")) if x)
+        out.append(("LATEST MESSAGE" if i == 0 else "EARLIER") + (f" - {who}" if who else ""))
+    return out
+
+
+def summarise_thread(thread: list[dict], context: str, cfg: dict, n: int, use_ai: bool = True,
+                     exclude: set | None = None) -> tuple[list[str], list[str], dict]:
+    """The whole forwarded conversation -> (bullet points, notes for the history, info).
+
+    Bullets are short points: what it's about, the key facts, then what to do ("[ ] ..." = an action).  The local AI
+    writes them if it is switched on and its answer checks out; otherwise they are built from the email's key sentences."""
+    sentences, owners = prepare_thread([m["text"] for m in thread])
+    keep = [i for i, x in enumerate(sentences) if x not in (exclude or set())]    # not what [focus] answers already show
+    rest, rest_owners = [sentences[i] for i in keep], [owners[i] for i in keep]
+    notes, info, out = [], {}, None
+    if cfg["summary"].get("backend") == "ollama" and use_ai and rest:
+        out, info = llm.summarise(rest, n, cfg["llm"], context, rest_owners, thread_labels(thread))
+        notes.append(f"AI summary ({info['seconds']}s)" if out else f"AI not used: {info['reason']}")
+    if not out and rest:
+        out = extractive_bullets(rest, n, rest_owners)
+    return out or [], notes, info
+
+
 def email_card(inc: Incoming, cfg: dict, now: datetime, use_ai: bool = True) -> Card:
     """A forwarded email -> [your [focus] answers] + summary (or the full text) + your ACTIONS.
 
@@ -77,6 +104,7 @@ def email_card(inc: Incoming, cfg: dict, now: datetime, use_ai: bool = True) -> 
     scfg = cfg["summary"]
     n = max(2, min(8, int(scfg.get("sentences", 4))))
     notes_raw = clean_body(inc.body)
+    want_images, notes_raw = detect_image_request(notes_raw)          # "include image" anywhere in your note
     notes_raw, focus, want_full = parse_focus(notes_raw, cfg)
 
     # The WHOLE thread, newest message first (each with its own signature removed): the summary and the
@@ -104,19 +132,18 @@ def email_card(inc: Incoming, cfg: dict, now: datetime, use_ai: bool = True) -> 
         text = _cap("\n\n".join(parts), int(scfg.get("max_full_chars", 2500))) or "(The forwarded email had no readable text.)"
         sections.append(Section("full", text=text))
     else:
-        keep = [i for i, x in enumerate(sentences) if x not in shown]      # don't repeat what the focus answers already say
-        rest, rest_owners = [sentences[i] for i in keep], [owners[i] for i in keep]
-        out = None
-        if scfg.get("backend") == "ollama" and use_ai and rest:
-            ctx = f"From: {_name_only(inc.fwd_from)}\nSubject: {inc.subject or inc.fwd_subject}" if inc.fwd_from else f"Subject: {inc.subject}"
-            out, info = llm.summarise(rest, n, cfg["llm"], ctx, rest_owners)
-            card_notes.append(f"AI summary ({info['seconds']}s)" if out else f"AI not used: {info['reason']}")
-        if not out and rest:
-            out = [finish(rest[i]) for i in pick(rest, n, owners=rest_owners)]
+        ctx = f"From: {_name_only(inc.fwd_from)}\nSubject: {inc.subject or inc.fwd_subject}" if inc.fwd_from else f"Subject: {inc.subject}"
+        out, notes, _ = summarise_thread(thread, ctx, cfg, n, use_ai, shown)
+        card_notes += notes
         if out:
-            sections.append(Section("summary", text=" ".join(out)))
+            sections.append(Section("summary", items=out, bullets=True))
         elif not focus:
             sections.append(Section("summary", text="(The forwarded email had no readable text.)"))
+
+    images = []
+    if want_images:
+        images = list(inc.fwd_images)[: int(cfg["email"].get("max_images", 3))]
+        card_notes.append(f"included {len(images)} image(s)" if images else "image requested but the email has none (small logos are ignored)")
 
     subject, s_ids = icon_lib.extract_tags(inc.subject, cfg)
     heading = subject or re.sub(r"^(?:fwd?|fw|re)\s*:\s*", "", inc.fwd_subject or "", flags=re.I).strip()
@@ -138,7 +165,7 @@ def email_card(inc: Incoming, cfg: dict, now: datetime, use_ai: bool = True) -> 
     if scfg.get("show_original_sender", True) and inc.fwd_from:
         subline = f"From {_name_only(inc.fwd_from)}" + (f" · {len(thread)} messages" if len(thread) > 1 else "")
     return Card(kind="email", heading=heading, subline=subline, sections=sections, icons=_dedupe(s_ids + lead_ids + body_ids),
-                source="email", created=now, notes=card_notes, vars={"date": now.strftime("%a %d %b")})
+                images=images, source="email", created=now, notes=card_notes, vars={"date": now.strftime("%a %d %b")})
 
 
 def reminder_cards(inc: Incoming, cfg: dict, now: datetime, split: bool | None = None) -> list[Card]:

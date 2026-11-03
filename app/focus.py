@@ -105,6 +105,28 @@ def parse_focus(notes: str, cfg: dict) -> tuple[str, list[str], bool]:
     return clean.strip(), focus, full
 
 
+_PIC = r"(?:images?|photos?|pictures?|pics?|attachments?)"
+_IMAGE_REQUEST = re.compile(
+    rf"\[\s*(?:(?:include|add|with|attach|print|show)\s+)?(?:the\s+|any\s+|all\s+)?{_PIC}\s*\]"          # [image]  [include photos]
+    rf"|\b(?:please\s+)?(?:include|add|attach|print|show)\s+(?:the\s+|any\s+|all\s+|its\s+|an?\s+)?(?:attached\s+|original\s+)?{_PIC}\b",
+    re.I)
+
+
+def detect_image_request(notes: str) -> tuple[bool, str]:
+    """Did you say "include image" (anywhere in your note, or as [image])?  Returns (yes/no, note without that phrase)."""
+    if not _IMAGE_REQUEST.search(notes or ""):
+        return False, notes
+    clean = _IMAGE_REQUEST.sub("", notes)
+    clean = re.sub(r"[ \t]{2,}", " ", clean)
+    clean = re.sub(r"[ \t]*([,.;:])[ \t]*(?=[,.;:]|\n|$)", r"\1", clean)             # tidy ", ," or " ." left behind
+    clean = re.sub(r"(?m)^[ \t]*[,.;:\-]+[ \t]*$", "", clean)
+    clean = re.sub(r"(?m)^[ \t,.;:\-]+", "", clean)                                         # ". ring Dave" -> "ring Dave"
+    clean = re.sub(r"(?mi)^(?:and|then|also|plus|but)\s+", "", clean)                         # "and reply by friday" -> "reply by friday"
+    clean = re.sub(r"(?mi)[ \t]+(?:and|then|also|plus|but)[ \t]*$", "", clean)
+    clean = re.sub(r"(?m)[ \t]*[,;:\-]+[ \t]*$", "", clean)                                   # "chase Dave," -> "chase Dave"
+    return True, re.sub(r"\n{3,}", "\n\n", clean).strip()
+
+
 def has_date(sentence: str) -> bool:
     return bool(_DATEISH.search(sentence))
 

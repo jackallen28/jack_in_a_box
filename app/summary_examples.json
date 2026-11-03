@@ -1,0 +1,286 @@
+{
+  "_about": "Training examples for the local AI. 'train' = worked examples; the closest ones that fit are shown to the model before each real email (it does not retrain the model, it shows it what a good summary looks like). 'eval' = held-out test cases for `python -m app.evaluate`, never shown to the model, so the score is honest. In a bullet, 'ACTION:' marks something the reader must do. Edit freely: add your own real emails (remove private details first). Every bullet must only use facts that are in its email. Bullets never say 'no action needed' or 'no need to reply' - the reader decides that.",
+  "train": [
+    {
+      "about": "overdue invoice, reply chain",
+      "email": "From: Dave Smith\nSubject: Invoice 4471\nLATEST MESSAGE - Dave Smith, 2 Nov:\nI can confirm the remittance has not arrived. Please send it by Friday or a late fee of $150 applies.\nEARLIER - Jack, 30 Oct:\nWe paid invoice 4471 on Tuesday through the bank.\nEARLIER - Dave Smith, 29 Oct:\nInvoice 4471 for $12,480 is 20 days overdue. Please confirm when payment will be made.",
+      "bullets": [
+        "Dave Smith says invoice 4471 ($12,480) is 20 days overdue.",
+        "Jack says it was paid on Tuesday through the bank, but Dave has not received it.",
+        "A late fee of $150 applies if it is not paid.",
+        "ACTION: Send the remittance for invoice 4471 by Friday."
+      ]
+    },
+    {
+      "about": "school notice with a cost and a form",
+      "email": "From: Northside Primary\nSubject: Year 9 excursion\nDear parents, the Year 9 excursion to the museum is on Thursday 12 November. The cost is $35. Please return the signed permission form and payment to the office by Monday 9 November. Students should bring a packed lunch and wear their school uniform. The bus leaves at 8:30am.",
+      "bullets": [
+        "Year 9 museum excursion on Thursday 12 November; the bus leaves at 8:30am.",
+        "The cost is $35. Students bring a packed lunch and wear school uniform.",
+        "ACTION: Return the signed permission form and $35 to the office by Monday 9 November."
+      ]
+    },
+    {
+      "about": "appointment confirmation",
+      "email": "From: Northside Medical\nSubject: Appointment confirmation\nHi Jack, this is a reminder that you have an appointment with Dr Lee on Tuesday 3 November at 2:15pm at Northside Medical, 45 High Street. Please arrive 10 minutes early and bring your Medicare card. If you need to reschedule, call 9555 0101 at least 24 hours before.",
+      "bullets": [
+        "Appointment with Dr Lee, Tuesday 3 November at 2:15pm, Northside Medical, 45 High Street.",
+        "Arrive 10 minutes early and bring your Medicare card.",
+        "ACTION: To reschedule, call 9555 0101 at least 24 hours before."
+      ]
+    },
+    {
+      "about": "newsletter",
+      "email": "From: Harbour Coffee\nSubject: October update\nHello everyone, thanks for a great October. We opened two new stores, in Perth and Hobart, and sales are up 12% on last year. Our new range launches on 1 December. No action is needed, we just wanted to keep you in the loop.",
+      "bullets": [
+        "Two new stores opened in October, in Perth and Hobart; sales are up 12% on last year.",
+        "The new range launches on 1 December."
+      ]
+    },
+    {
+      "about": "interview scheduling thread",
+      "email": "From: Tom Reyes\nSubject: Interview time\nLATEST MESSAGE - Tom Reyes, 4 Nov:\nWe would like to move your interview to Wednesday 11 November at 10:30am. It will be at Level 3, 88 King Street. Please confirm by Monday and bring photo ID.\nEARLIER - Jack, 3 Nov:\nThanks Tom, I am available any morning next week.",
+      "bullets": [
+        "Tom Reyes wants to hold Jack's interview on Wednesday 11 November at 10:30am, Level 3, 88 King Street.",
+        "Jack had said any morning next week suits him.",
+        "Bring photo ID.",
+        "ACTION: Confirm the time with Tom by Monday."
+      ]
+    },
+    {
+      "about": "flight time change",
+      "email": "From: Qantas\nSubject: Your flight has been retimed\nYour flight QF431 from Sydney to Perth on 14 November has been retimed. The new departure is 9:40am (it was 8:15am) and arrival is 12:05pm. No action is needed unless the new time does not suit you. If it does not, call 13 13 13 within 48 hours to change for free. Check-in opens 24 hours before departure.",
+      "bullets": [
+        "Flight QF431 Sydney to Perth on 14 November now leaves at 9:40am (was 8:15am) and arrives at 12:05pm.",
+        "Check-in opens 24 hours before departure.",
+        "ACTION: Only if the new time does not suit, call 13 13 13 within 48 hours to change for free."
+      ]
+    },
+    {
+      "about": "lease renewal with a price rise",
+      "email": "From: Ray White Property\nSubject: Lease renewal\nYour lease at 12 Station Road ends on 31 January. A 12 month renewal would be $520 per week, up from $495 now. If you want to renew, please sign and return the attached agreement by Friday 20 November. Otherwise you need to give 28 days notice.",
+      "bullets": [
+        "The lease at 12 Station Road ends on 31 January.",
+        "A 12 month renewal would cost $520 a week, up from $495.",
+        "ACTION: Sign and return the renewal agreement by Friday 20 November, or give 28 days notice to leave."
+      ]
+    },
+    {
+      "about": "tradesperson quote with a deposit",
+      "email": "From: Mark at DeckPro\nSubject: Quote for your deck\nHi Jack, thanks for having us look at the deck. The quote to replace the boards and repaint is $3,800 including GST. We can start on Monday 16 November and expect to take 4 days. A 20% deposit ($760) is needed to book that start date, and the rest is due on completion. The quote is valid for 14 days.",
+      "bullets": [
+        "DeckPro's quote to replace the deck boards and repaint is $3,800 including GST.",
+        "They could start Monday 16 November and take about 4 days.",
+        "A 20% deposit ($760) books the date; the rest is due when the job is finished. The quote is valid for 14 days.",
+        "ACTION: Pay the $760 deposit to book the 16 November start."
+      ]
+    },
+    {
+      "about": "project decision",
+      "email": "From: Amy Chen\nSubject: Supplier decision\nLATEST MESSAGE - Amy Chen, 4 Nov:\nWe have decided to go with the supplier from Melbourne. The contract goes to legal on Thursday. No action is needed from you right now. I will send the signed copy next week.\nEARLIER - Amy Chen, 2 Nov:\nTwo suppliers are in the running: Melbourne at $48,000 and Adelaide at $52,500. Melbourne can deliver by 15 January.",
+      "bullets": [
+        "Amy Chen says the Melbourne supplier was chosen ($48,000; the Adelaide quote was $52,500).",
+        "Melbourne can deliver by 15 January.",
+        "The contract goes to legal on Thursday and Amy will send the signed copy next week."
+      ]
+    },
+    {
+      "about": "party invitation with an RSVP",
+      "email": "From: Karen Allen\nSubject: Anniversary dinner\nYou are invited to the Allen family 40th anniversary dinner on Saturday 28 November at 6:30pm at The Boathouse, Lake Road. Dress is smart casual. Please RSVP to Karen by Sunday 15 November and let her know about any dietary needs. Parking is limited, so car pooling is encouraged.",
+      "bullets": [
+        "Invitation to the Allen family 40th anniversary dinner, Saturday 28 November at 6:30pm, The Boathouse, Lake Road.",
+        "Dress is smart casual; parking is limited so car pool if you can.",
+        "ACTION: RSVP to Karen by Sunday 15 November and mention any dietary needs."
+      ]
+    }
+  ],
+  "eval": [
+    {
+      "name": "quote request",
+      "subject": "Quote for 50 units",
+      "from": "Priya Nair",
+      "messages": [
+        {
+          "sender": "Priya Nair",
+          "date": "4 Nov",
+          "text": "Hi Jack, we are planning an order for the new season. Could you send us a quote for 50 units of the standard model by Wednesday 11 November? Delivery would be to our Brisbane warehouse. We would also like to know your lead time."
+        }
+      ],
+      "must_include": [
+        "50",
+        "11 November"
+      ],
+      "expect_action": true
+    },
+    {
+      "name": "meeting moved",
+      "subject": "Team meeting",
+      "from": "Sam Owen",
+      "messages": [
+        {
+          "sender": "Sam Owen",
+          "date": "3 Nov",
+          "text": "Hi all, the team meeting has moved to 3pm on Thursday and will be in Room 4. The agenda is attached. No need to reply, just turn up."
+        }
+      ],
+      "must_include": [
+        "3pm",
+        "Thursday",
+        "Room 4"
+      ],
+      "expect_action": false
+    },
+    {
+      "name": "gas bill",
+      "subject": "Your gas bill",
+      "from": "BrightGas",
+      "messages": [
+        {
+          "sender": "BrightGas",
+          "date": "2 Nov",
+          "text": "Your gas bill of $212.40 is ready. It is due on 20 November. You can pay online or by phone on 1300 123 456. Late payments may attract a fee."
+        }
+      ],
+      "must_include": [
+        "$212.40",
+        "20 November"
+      ],
+      "expect_action": true
+    },
+    {
+      "name": "landlord thread",
+      "subject": "Re: Back door repairs",
+      "from": "Marsha Boyd",
+      "messages": [
+        {
+          "sender": "Marsha Boyd",
+          "date": "3 Nov",
+          "text": "A tradesperson will inspect the back door on Friday 6 November at 10am. Please make sure someone is home to give access."
+        },
+        {
+          "sender": "Jack",
+          "date": "1 Nov",
+          "text": "The latch on the back door is broken and the door will not lock. Can you arrange a repair soon?"
+        }
+      ],
+      "must_include": [
+        "Friday",
+        "10am",
+        "back door"
+      ],
+      "expect_action": true
+    },
+    {
+      "name": "newsletter",
+      "subject": "Winter garden show",
+      "from": "Green Thumbs Club",
+      "messages": [
+        {
+          "sender": "Green Thumbs Club",
+          "date": "2 Nov",
+          "text": "Thanks to everyone who came to our winter garden show. We raised $1,850 for the community garden and sold out of seedlings. Photos from the day are on our website. We will see you again next year."
+        }
+      ],
+      "must_include": [
+        "$1,850"
+      ],
+      "expect_action": false
+    },
+    {
+      "name": "parcel delivery",
+      "subject": "Your parcel is on its way",
+      "from": "SwiftPost",
+      "messages": [
+        {
+          "sender": "SwiftPost",
+          "date": "3 Nov",
+          "text": "Your parcel will be delivered tomorrow between 9am and 1pm. A signature is required, so please make sure someone is home. Your tracking number is AB123456789."
+        }
+      ],
+      "must_include": [
+        "9am",
+        "AB123456789"
+      ],
+      "expect_action": true
+    },
+    {
+      "name": "insurance renewal",
+      "subject": "Your car insurance renewal",
+      "from": "SafeDrive Insurance",
+      "messages": [
+        {
+          "sender": "SafeDrive Insurance",
+          "date": "3 Nov",
+          "text": "Your car insurance renews on 30 November. The premium is $1,240 for the year. The renewal will happen automatically and the payment will be taken from your card on file. If you want to change or cancel your cover, call us on 1800 555 010 before 23 November."
+        }
+      ],
+      "must_include": [
+        "$1,240",
+        "30 November"
+      ],
+      "expect_action": true
+    },
+    {
+      "name": "application outcome",
+      "subject": "Your application",
+      "from": "Orion Labs",
+      "messages": [
+        {
+          "sender": "Orion Labs",
+          "date": "4 Nov",
+          "text": "Thank you for applying for the Technician role. After careful consideration we have decided to proceed with another candidate. We will keep your details on file for six months and wish you all the best."
+        }
+      ],
+      "must_include": [
+        "Technician",
+        "six months"
+      ],
+      "expect_action": false
+    },
+    {
+      "name": "price change thread",
+      "subject": "Re: Price list update",
+      "from": "Lena Fox",
+      "messages": [
+        {
+          "sender": "Lena Fox",
+          "date": "4 Nov",
+          "text": "Thanks Jack. We can hold the old prices for orders placed before 20 November. After that the new prices apply. Please send your order by then."
+        },
+        {
+          "sender": "Jack",
+          "date": "2 Nov",
+          "text": "Does the 8 percent increase apply to our standing order of 200 units a month?"
+        },
+        {
+          "sender": "Lena Fox",
+          "date": "1 Nov",
+          "text": "From 20 November our prices will rise by 8 percent."
+        }
+      ],
+      "must_include": [
+        "8 percent",
+        "20 November"
+      ],
+      "expect_action": true
+    },
+    {
+      "name": "conference registration",
+      "subject": "Registration closing soon",
+      "from": "NextGen Summit",
+      "messages": [
+        {
+          "sender": "NextGen Summit",
+          "date": "3 Nov",
+          "text": "Early bird registration for the NextGen Summit closes on 20 November. The early bird price is $450, rising to $620 after that. The summit runs from 3 to 5 February in Melbourne. Register on our website to secure your seat."
+        }
+      ],
+      "must_include": [
+        "$450",
+        "20 November",
+        "Melbourne"
+      ],
+      "expect_action": true
+    }
+  ]
+}

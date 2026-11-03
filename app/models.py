@@ -14,6 +14,7 @@ class Section:
     items: list[str] = field(default_factory=list)
     strong: bool = False           # drawn larger / bold (e.g. the deadline)
     label: str = ""                # overrides the template label (e.g. your [focus] phrase)
+    bullets: bool = False          # items are bullet points; an item starting "[ ] " is an action (tick-box)
 
 
 @dataclass

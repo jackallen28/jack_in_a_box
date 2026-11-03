@@ -4,25 +4,30 @@ const src = fs.readFileSync(process.argv[2], 'utf8').replace('__TOKEN__', 'secre
 
 class Sheet {
   constructor(data) { this.data = data; }
-  getDataRange() { return { getValues: () => this.data.map(r => r.slice()) }; }
+  getDataRange() {
+    // time-only answers are dates in 1899; getDisplayValues shows them the way the sheet displays them
+    const shown = r => r.map(c => c instanceof Date && c.getFullYear() < 1900 ? '5:30:00 PM' : String(c));
+    return { getValues: () => this.data.map(r => r.slice()), getDisplayValues: () => this.data.map(shown) };
+  }
   getLastRow() { return this.data.length; }
   deleteRow(n) { this.data.splice(n - 1, 1); }
 }
 const sheet = new Sheet([
-  ['Timestamp', 'Email Address', 'Body', 'Image'],
-  [new Date('2026-11-03T01:00:00Z'), 'me@x.com', 'first', ''],
-  ['', '', '', ''],                                                    // blank row: must be skipped
-  [new Date('2026-11-03T02:00:00Z'), 'me@x.com', 'second', 'https://drive.google.com/open?id=GOODFILEID0001'],
-  [new Date('2026-11-03T03:00:00Z'), 'me@x.com', 'third', ''],
-  [new Date('2026-11-03T04:00:00Z'), 'me@x.com', 'fourth', ''],
+  ['Timestamp', 'Email Address', 'Body', 'Image', 'Schedule Send (DATE)', 'Schedule Send (TIME)'],
+  [new Date('2026-11-03T01:00:00Z'), 'me@x.com', 'first', '', '', ''],
+  ['', '', '', '', '', ''],                                                    // blank row: must be skipped
+  [new Date('2026-11-03T02:00:00Z'), 'me@x.com', 'second', 'https://drive.google.com/open?id=GOODFILEID0001', new Date('2026-11-04T13:00:00Z'), new Date(Date.UTC(1899, 11, 30, 7, 30))],
+  [new Date('2026-11-03T03:00:00Z'), 'me@x.com', 'third', '', '', ''],
+  [new Date('2026-11-03T04:00:00Z'), 'me@x.com', 'fourth', '', '', ''],
 ]);
-global.SpreadsheetApp = { getActiveSpreadsheet: () => ({ getSheets: () => [sheet], getSheetByName: () => null }) };
+global.SpreadsheetApp = { getActiveSpreadsheet: () => ({ getSheets: () => [sheet], getSheetByName: () => null, getSpreadsheetTimeZone: () => 'Australia/Sydney' }) };
 global.ContentService = { MimeType: { JSON: 'json' }, createTextOutput: s => ({ text: s, setMimeType() { return this; } }) };
 global.Utilities = {
   DigestAlgorithm: { MD5: 'MD5' },
   computeDigest: (a, s) => Array.from(crypto.createHash('md5').update(s).digest()),
   base64EncodeWebSafe: b => Buffer.from(b).toString('base64url'),
   base64Encode: b => Buffer.from(b).toString('base64'),
+  formatDate: (d, tz, fmt) => d.toLocaleString('sv-SE', { timeZone: tz }).replace(' ', 'T'),     // "yyyy-MM-dd'T'HH:mm:ss"
 };
 global.DriveApp = {
   getFileById: id => {

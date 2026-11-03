@@ -8,6 +8,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from test_core import summary_text  # noqa: E402
 from app.config import normalise  # noqa: E402
 from app.emailclean import clean_forwarded, thread_messages  # noqa: E402
 from app.mailparse import parse  # noqa: E402
@@ -107,10 +109,10 @@ NO_MARKER = "see below\n\nHi Jack, invoice 4471 for $12,480 is 20 days overdue. 
 # ----------------------------------------------------------------------------- the reported problems
 def test_reply_chain_summary_uses_the_whole_conversation():
     c = card("Fwd: Re: Invoice 4471", GMAIL_CHAIN)
-    summary = section(c, "summary").text
+    summary = summary_text(c)
     assert "remittance is not here yet" in summary                      # where it stands now
     assert "$12,480" in summary and "20 days overdue" in summary        # how it began (from the OLDEST, doubly-quoted message)
-    assert "we paid invoice 4471" in summary                            # the middle of the conversation
+    assert "we paid invoice 4471" in summary.lower()                            # the middle of the conversation
     assert "Accounts Manager" not in summary and "02 9999" not in summary   # signatures stay out, in every message
     assert c.subline == "From Dave Smith · 3 messages"
     assert section(c, "actions").items == ["Chase Dave"]
@@ -118,7 +120,7 @@ def test_reply_chain_summary_uses_the_whole_conversation():
 
 def test_apple_mail_quoted_forward_is_summarised_not_lost():
     c = card("Fwd: Invoice 4471 overdue", APPLE)
-    summary = section(c, "summary").text
+    summary = summary_text(c)
     assert "$12,480" in summary and "20 days overdue" in summary and "bank details" in summary
     assert "no readable text" not in summary
     assert section(c, "actions").items == ["Chase Dave about the invoice"]      # your note stays an action
@@ -130,12 +132,12 @@ def test_forward_with_no_recognisable_marker_is_still_split_into_note_and_email(
     assert ib.guessed_forward and ib.body == "see below" and "invoice 4471" in ib.forwarded
     c = card("Fwd: Invoice", NO_MARKER)
     assert section(c, "actions").items == ["See below"]                         # NOT the whole email as a to-do list
-    assert "$12,480" in section(c, "summary").text
+    assert "$12,480" in summary_text(c)
 
 
 def test_outlook_chain_is_read_newest_first_without_signatures():
     c = card("FW: Invoice 4471", OUTLOOK_CHAIN)
-    summary = section(c, "summary").text
+    summary = summary_text(c)
     assert "$12,480" in summary and "paid invoice 4471" in summary and "late fee" in summary
     assert "Accounts Manager" not in summary and "Sent:" not in summary
     assert c.subline.endswith("3 messages")

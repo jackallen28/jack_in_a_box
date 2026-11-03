@@ -12,7 +12,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from test_core import mk  # noqa: E402
+from test_core import mk, summary_text  # noqa: E402
 from app import llm  # noqa: E402
 from app.config import normalise  # noqa: E402
 from app.emailclean import clean_forwarded  # noqa: E402
@@ -141,7 +141,7 @@ def test_card_has_focus_then_summary_then_actions():
 
 def test_summary_does_not_repeat_what_the_focus_blocks_already_say():
     (card,), _ = build_cards(fwd("[reply by friday] [paper due monday]"), CFG)
-    summary = next(s for s in card.sections if s.key == "summary").text
+    summary = summary_text(card)
     assert "let me know by Friday" not in summary and "science paper is due Monday" not in summary
     assert "invoice 4471" in summary or "bank details" in summary                  # the rest of the email
 
@@ -229,13 +229,13 @@ def test_ai_summary_is_used_when_it_sticks_to_the_email(ollama):
     cfg, fake = ollama
     fake.reply = {"message": {"content": "**Summary:**\n- " + GOOD.replace(". ", ".\n- ")}}
     (card,), _ = build_cards(fwd(""), cfg)
-    s = card.sections[0].text
+    s = summary_text(card)
     assert s.startswith("Please let me know by Friday") and "**" not in s and "- " not in s
     assert card.notes and card.notes[0].startswith("AI summary")
     req = fake.seen[0]
     assert req["keep_alive"] == 0 and req["options"]["num_ctx"] == 2048 and req["model"] == "qwen2.5:0.5b" and req["stream"] is False
     assert "ONLY facts" in req["messages"][0]["content"]
-    prompt = req["messages"][1]["content"]
+    prompt = req["messages"][-1]["content"]
     assert "by Friday" in prompt and "From: Dave Smith" in prompt             # sender/subject given as context
     assert "T: 02 9999" not in prompt and "Accounts" not in prompt             # signature never reaches the model
 
@@ -244,9 +244,10 @@ def test_a_long_email_is_cut_to_a_small_prompt_that_keeps_the_requests(ollama):
     cfg, fake = ollama
     fake.reply = {"message": {"content": GOOD}}
     filler = " ".join(f"The weather in district number {i} has been quite pleasant and the gardens look lovely this season." for i in range(80))
+    cfg["llm"]["max_input_chars"] = 1500
     build_cards(fwd("", EMAIL.replace("I hope you're well.", filler)), cfg)
-    prompt = fake.seen[0]["messages"][1]["content"]
-    assert len(prompt) < 2200 and "by Friday" in prompt and "science paper is due Monday" in prompt
+    prompt = fake.seen[0]["messages"][-1]["content"]
+    assert len(prompt) < 2000 and "by Friday" in prompt and "science paper is due Monday" in prompt
 
 
 @pytest.mark.parametrize("lie", [
@@ -260,15 +261,15 @@ def test_ai_that_makes_things_up_is_rejected_and_builtin_summary_used(ollama, li
     fake.reply = {"message": {"content": lie + " Please see the details below."}}
     (card,), _ = build_cards(fwd(""), cfg)
     assert card.notes and card.notes[0].startswith("AI not used")
-    s = card.sections[0].text
-    assert "let me know by Friday" in s and "99,999" not in s and "5555" not in s and "Gerald" not in s and "Zebra" not in s
+    s = summary_text(card)
+    assert "by Friday" in s and "99,999" not in s and "5555" not in s and "Gerald" not in s and "Zebra" not in s
 
 
 def test_ai_failures_fall_back_without_losing_the_print(ollama):
     cfg, fake = ollama
     fake.status = 404
     (card,), _ = build_cards(fwd(""), cfg)
-    assert "ollama pull" in card.notes[0] and "let me know by Friday" in card.sections[0].text
+    assert "ollama pull" in card.notes[0] and "by Friday" in summary_text(card)
     cfg["llm"]["url"] = "http://127.0.0.1:1"                                    # nothing listening
     t = time.time()
     (card,), _ = build_cards(fwd(""), cfg)

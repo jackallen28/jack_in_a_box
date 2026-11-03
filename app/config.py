@@ -204,8 +204,9 @@ DEFAULTS: dict = {
         "timeout": 240,             # seconds; a Pi 3B+ can take 1-3 minutes
         "keep_alive": 0,            # unload the model right after each summary to free the Pi's RAM
         "num_ctx": 2048,
-        "num_predict": 160,
-        "max_input_chars": 1600,
+        "num_predict": 220,
+        "max_input_chars": 3000,    # how much of the email the AI reads (the whole thing if it fits)
+        "examples": 1,              # worked examples shown before your email (0 = none; see app/summary_examples.json)
     },
     "calendar": {
         "enabled": True,

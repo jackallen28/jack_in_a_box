@@ -170,7 +170,7 @@ SECTIONS = {
         F("general.date_order", "Dates like 4/11 mean", "select", options=opts(("dmy", "4 November (day first)"), ("mdy", "April 11 (month first)"))),
         F("general.time_format", "Clock", "select", options=opts(("12h", "12-hour (5:00 PM)"), ("24h", "24-hour (17:00)"))),
         F("general.timezone", "Timezone", help="Blank = the Pi's timezone. e.g. Australia/Sydney"),
-        F("summary.sentences", "Forwarded-email summary length (sentences)", "number", min=2, max=8),
+        F("summary.sentences", "Forwarded-email summary length (bullet points)", "number", "How many bullet points the summary has (information first, then what to do).", min=2, max=8),
         F("summary.max_actions", "Max actions listed under a summary", "number", min=1, max=30),
         F("summary.show_original_sender", "Show who the forwarded email was from", "bool"),
         F("summary.backend", "Summary engine", "select", options=opts(
@@ -180,6 +180,9 @@ SECTIONS = {
         F("llm.url", "AI: Ollama address", help="On the Pi: http://127.0.0.1:11434. Or another computer, e.g. http://192.168.1.50:11434"),
         F("llm.model", "AI: model", help="qwen2.5:0.5b is the largest that fits a Pi 3B+ (1 GB)."),
         F("llm.timeout", "AI: give up after (seconds)", "number", "Each email waits at most this long, then uses the built-in summary.", min=10, max=900),
+        F("llm.examples", "AI: worked examples shown first", "number", "Real-looking emails with a good summary, shown to the model before yours (from app/summary_examples.json). More = more accurate but slower; 0 = none. 1-2 suits a Pi, 3-4 a faster computer.", min=0, max=6),
+        F("llm.max_input_chars", "AI: how much of the email it reads (characters)", "number", "The whole conversation if it fits. Longer emails lose their least useful sentences first.", min=500, max=12000, step=100),
+        F("llm.num_predict", "AI: longest answer (tokens)", "number", "Room for 3-5 bullet points. Higher is slower.", min=60, max=800, step=10),
         F("llm.keep_alive", "AI: keep the model in memory for (seconds)", "number", "0 = free the RAM straight after each summary (best on a Pi).", min=0, max=3600),
     ],
     "calendar": [

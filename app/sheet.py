@@ -20,12 +20,14 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import date, datetime, time as dtime, timedelta
+from zoneinfo import ZoneInfo
 
 from . import icons as icon_lib
 from .config import ConfigStore
 from .mailparse import Incoming, _load_image
-from .pipeline import build_cards, classify_sender, message_card
+from .dates import extract_deadline
+from .pipeline import build_cards, classify_sender, local_now, local_tz, message_card
 from .service import Service
 from .textproc import _dedupe
 
@@ -71,7 +73,8 @@ def call(cfg: dict, action: str, timeout: float = 40, **params) -> dict:
 # --------------------------------------------------------------------------- understanding the columns
 def detect_columns(headers: list[str]) -> dict:
     """Work out which column is which from the question titles you gave the form."""
-    cols: dict = {"type": None, "heading": None, "body": None, "image": None, "email": None, "symbols": []}
+    cols: dict = {"type": None, "heading": None, "body": None, "image": None, "email": None, "symbols": [],
+                  "sched_date": None, "sched_time": None, "stamp": None}
     used: set = set()
     norm = {h: re.sub(r"[^a-z0-9]+", " ", h.lower()).strip() for h in headers}
 
@@ -87,12 +90,18 @@ def detect_columns(headers: list[str]) -> dict:
                     cols[role] = h
                     return
 
+    take("stamp", lambda n: n == "timestamp")
+    take("sched_date", lambda n: re.search(r"\b(schedul\w*|send|print)\b", n) is not None and re.search(r"\bdate\b|\bday\b", n) is not None)
+    take("sched_time", lambda n: re.search(r"\b(schedul\w*|send|print)\b", n) is not None and re.search(r"\btime\b", n) is not None)
     take("email", lambda n: "email" in n)
     take("symbols", lambda n: re.search(r"\b(symbol|icon)\b", n) is not None, many=True)
     take("image", lambda n: re.search(r"image|photo|picture|upload|\bfile\b", n) is not None)
     take("heading", lambda n: re.search(r"heading|title|subject", n) is not None)
     take("type", lambda n: re.search(r"reminder", n) is not None or n in ("type", "kind"))
     take("body", lambda n: re.search(r"body|text|note|detail|message", n) is not None)
+    if cols["stamp"] is None and headers and headers[0] not in used:
+        cols["stamp"] = headers[0]                                # the first column of a form sheet is when it was sent
+        used.add(headers[0])
     if cols["body"] is None:                                  # fall back: first unused, non-timestamp column
         for h in headers[1:]:
             if h not in used and norm[h]:
@@ -102,13 +111,100 @@ def detect_columns(headers: list[str]) -> dict:
     return cols
 
 
+
+# --------------------------------------------------------------------------- "Schedule Send" (DATE + TIME columns)
+_TIME_HM = re.compile(r"(\d{1,2})[:.](\d{2})(?::\d{2})?\s*([ap])?\.?m?\b", re.I)
+_TIME_H = re.compile(r"\b(\d{1,2})\s*([ap])\.?m\b", re.I)
+
+
+def parse_time(text: str) -> dtime | None:
+    """"17:30", "5:30 PM", "5:30:00 pm", "5pm", "1899-12-30T17:30:00" -> a time of day (None if unreadable)."""
+    t = (text or "").strip()
+    m = _TIME_HM.search(t)
+    if m:
+        h, mi, ap = int(m.group(1)), int(m.group(2)), (m.group(3) or "").lower()
+    else:
+        m = _TIME_H.search(t)
+        if not m:
+            return None
+        h, mi, ap = int(m.group(1)), 0, m.group(2).lower()
+    if ap:
+        if not 1 <= h <= 12:
+            return None
+        h = h % 12 + (12 if ap == "p" else 0)
+    return dtime(h, mi) if h < 24 and mi < 60 else None
+
+
+def parse_date(text: str, order: str, ref: datetime) -> date | None:
+    """"2026-11-05", "2026-11-05T00:00:00", "5/11/2026", "5 November" -> a date (None if unreadable)."""
+    t = (text or "").strip()
+    m = re.match(r"(\d{4})-(\d{2})-(\d{2})", t)
+    try:
+        if m:
+            return date(int(m[1]), int(m[2]), int(m[3]))
+        m = re.fullmatch(r"(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})", t)
+        if m:
+            a, b, y = int(m[1]), int(m[2]), int(m[3])
+            y += 2000 if y < 100 else 0
+            return date(y, b, a) if order == "dmy" else date(y, a, b)
+    except ValueError:
+        return None
+    _, dl = extract_deadline(t, ref, order)
+    return dl.when.date() if dl else None
+
+
+def sheet_zone(name: str, cfg: dict):
+    """The timezone the sheet's times are written in (Google tells us; else your own setting)."""
+    try:
+        return ZoneInfo(name) if name else local_tz(cfg)
+    except Exception:
+        return local_tz(cfg)
+
+
+def schedule_due(values: dict, cols: dict, cfg: dict, tzname: str = "") -> tuple[datetime | None, str]:
+    """When should this form row print?  (None = straight away, plus a note if the schedule couldn't be read.)
+
+    * both blank                  -> now
+    * date + time                 -> then (if that moment is still ahead)
+    * time only                   -> that time on the day the form was sent
+    * date only                   -> that day at the calendar print time (07:00); today or earlier -> now
+    A moment that has already passed prints straight away - the caller compares with the clock.
+    """
+    g = lambda role: (values.get(cols[role]) or "").strip() if cols.get(role) else ""
+    sd, st = g("sched_date"), g("sched_time")
+    if not sd and not st:
+        return None, ""
+    tz = sheet_zone(tzname, cfg)
+    order = cfg["general"].get("date_order", "dmy")
+    ref = datetime.now(tz)
+    stamp = g("stamp").replace(" ", "T", 1)
+    try:
+        sent = datetime.fromisoformat(stamp[:19]).replace(tzinfo=tz) if stamp else ref
+    except ValueError:
+        sent = ref
+    d = parse_date(sd, order, sent) if sd else None
+    t = parse_time(st) if st else None
+    if (sd and d is None) or (st and t is None):
+        bad = sd if (sd and d is None) else st
+        return None, f"couldn't read the schedule '{bad}' - printed straight away"
+    if d is None:
+        d = sent.date()                                        # time but no date: the day it was sent
+    if t is None:
+        if d <= sent.date():
+            return None, ""                                    # "today" with no time = now
+        t = parse_time(cfg["calendar"].get("print_time", "07:00")) or dtime(7, 0)
+    return datetime.combine(d, t, tzinfo=tz), ""
+
+
 # --------------------------------------------------------------------------- the poller
 class SheetPoller(threading.Thread):
     def __init__(self, cfg: ConfigStore, svc: Service):
         super().__init__(name="sheet", daemon=True)
         self.cfg, self.svc = cfg, svc
         self.kick = threading.Event()
-        self.status = {"state": "disabled", "last_check": "", "error": "", "processed": 0, "waiting": 0}
+        self.status = {"state": "disabled", "last_check": "", "error": "", "processed": 0, "waiting": 0,
+                       "scheduled": 0, "next_scheduled": ""}
+        self._next_due: datetime | None = None                   # the earliest scheduled row, so it prints on time
         self._last_poll = 0.0
         self._err_logged = False
 
@@ -118,7 +214,8 @@ class SheetPoller(threading.Thread):
             sc = self.cfg.data["sheet"]
             if sc.get("enabled") and sc.get("url") and sc.get("token"):
                 try:
-                    if self.kick.is_set() or time.time() - self._last_poll >= max(15, int(sc.get("poll_seconds", 60))):
+                    due_now = self._next_due is not None and datetime.now(self._next_due.tzinfo) >= self._next_due
+                    if self.kick.is_set() or due_now or time.time() - self._last_poll >= max(15, int(sc.get("poll_seconds", 60))):
                         self._last_poll = time.time()
                         self.poll_once()
                     else:
@@ -150,20 +247,28 @@ class SheetPoller(threading.Thread):
         cols = detect_columns(data.get("headers", []))
         done = 0
         waiting = 0
+        scheduled: list[datetime] = []
+        tzname = data.get("timezone", "")
         for row in data.get("rows", []):
             rid = row["id"]
             if self.svc.db.one("SELECT 1 FROM sheet_rows WHERE id=?", (rid,)):
                 waiting += 1
                 continue
             try:
-                self.process_row(rid, row.get("values", {}), cols)
+                due, snote = schedule_due(row.get("values", {}), cols, c, tzname)
+                if due is not None and due > datetime.now(due.tzinfo):
+                    scheduled.append(due)                    # not yet: stays in the sheet and is looked at again every poll
+                    continue
+                self.process_row(rid, row.get("values", {}), cols, (due, snote))
                 done += 1
             except SheetError:
                 raise
             except Exception as e:                           # a bad row must not block the rows behind it
                 log.exception("Couldn't print a sheet row")
                 self._record(rid, "error", [], f"{type(e).__name__}: {e}")
-        self.status.update(waiting=waiting + done, last_check=datetime.now().strftime("%d %b %H:%M:%S"))
+        self._next_due = min(scheduled) if scheduled else None
+        self.status.update(waiting=waiting + done, scheduled=len(scheduled), last_check=datetime.now().strftime("%d %b %H:%M:%S"),
+                           next_scheduled=self._next_due.strftime("%a %d %b %H:%M") if self._next_due else "")
         self.reap()
         return done
 
@@ -171,11 +276,14 @@ class SheetPoller(threading.Thread):
         self.svc.db.execute("INSERT OR REPLACE INTO sheet_rows(id, first_seen, status, jobs, note) VALUES (?,?,?,?,?)",
                             (rid, datetime.now().isoformat(timespec="seconds"), status, json.dumps(jobs), note))
 
-    def process_row(self, rid: str, values: dict, cols: dict) -> None:
+    def process_row(self, rid: str, values: dict, cols: dict, sched: tuple | None = None) -> None:
         c = self.cfg.data
+        due, snote = sched if sched is not None else schedule_due(values, cols, c)
         g = lambda role: (values.get(cols[role]) or "").strip() if cols.get(role) else ""
         self.svc.touch()
-        notes: list[str] = []
+        notes: list[str] = [snote] if snote else []
+        if due is not None:
+            notes.append("scheduled for " + due.strftime("%a %d %b %H:%M"))
         email = g("email").lower()
         kind = "message" if re.search("message", g("type"), re.I) else "reminder"
 

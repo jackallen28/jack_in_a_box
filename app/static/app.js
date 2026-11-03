@@ -707,7 +707,7 @@ function formPage(main) {
   async function refresh() {
     const st = await api("/api/status"), s = st.sheet || {};
     status.replaceChildren(h("div", {}, !CFG.sheet.enabled ? "Not switched on yet (Step 3)." :
-      `Google Form link: ${s.state || "starting"}${s.last_check ? ", last checked " + s.last_check : ""}${s.error ? " - " + s.error : ""}`));
+      `Google Form link: ${s.state || "starting"}${s.last_check ? ", last checked " + s.last_check : ""}${s.error ? " - " + s.error : ""}${s.scheduled ? `. ${s.scheduled} scheduled, next prints ${s.next_scheduled}` : ""}`));
   }
   refresh(); POLL = setInterval(() => refresh().catch(() => {}), 6000);
   api("/api/icons").then(r => { symbols.value = r.icons.filter(i => i.enabled).sort((a, b) => a.n - b.n).map(i => `${i.n} - ${i.name}`).join("\n"); });
@@ -723,7 +723,10 @@ function formPage(main) {
       h("li", {}, h("strong", {}, "Symbol 1"), ", ", h("strong", {}, "Symbol 2"), ", ", h("strong", {}, "Symbol 3"), " - Dropdown (optional). Paste the list below as the options."),
       h("li", {}, h("strong", {}, "Heading"), " - Short answer."),
       h("li", {}, h("strong", {}, "Body"), " - Paragraph."),
-      h("li", {}, h("strong", {}, "Image"), " - File upload (images only, up to 3 files, 10 MB).")),
+      h("li", {}, h("strong", {}, "Image"), " - File upload (images only, up to 3 files, 10 MB)."),
+      h("li", {}, h("strong", {}, "Schedule Send (DATE)"), " - ", h("strong", {}, "Date"), " question (optional) and ", h("strong", {}, "Schedule Send (TIME)"), " - ", h("strong", {}, "Time"), " question (optional). ",
+        "Both blank (or a moment that has already passed) = prints straight away. Date + time = prints at that moment. Time only = that time on the day you sent the form. ",
+        "Date only = that morning at the calendar print time (7:00 by default); today's date alone prints now. The row waits safely in the sheet until it prints.")),
     h("p", { class: "small" }, "Finally ", h("strong", {}, "Responses tab -> Link to Sheets"), " to create the spreadsheet. Everything submitted through the form prints straight away, as you (it never waits for the button). ",
       "If you share the form with others and want friends' entries to wait for the button, switch Step 3 to “decide by sender” and turn on ", h("strong", {}, "Settings -> Responses -> Collect email addresses: Verified"), "."),
     h("div", { class: "f" }, h("label", { class: "l" }, "Symbol dropdown options (one per line: number - name)"), symbols,
@@ -741,6 +744,8 @@ function formPage(main) {
       h("li", {}, h("strong", {}, "Deploy -> New deployment"), " -> type ", h("strong", {}, "Web app"), " -> Execute as: ", h("strong", {}, "Me"), "; Who has access: ", h("strong", {}, "Anyone"), " -> Deploy."),
       h("li", {}, "Google asks you to authorise it (“unverified app”: Advanced -> Go to ... -> Allow). That's your own script reading your own sheet."),
       h("li", {}, "Copy the ", h("strong", {}, "Web app URL"), " it shows.")),
+    h("p", { class: "small" }, h("strong", {}, "Already set up before? "), "When this box gets a new script (for example to add Schedule Send), paste the new one over the old one, Save, then ",
+      h("strong", {}, "Deploy -> Manage deployments -> pencil -> Version: New version -> Deploy"), ". Your Web app URL and secret code stay the same."),
     h("p", { class: "small muted" }, "“Anyone” just means no Google login is needed to call it; every request still has to carry the secret code that's inside your script, so nobody else can read or change the sheet through it."),
     h("div", { class: "row" },
       h("button", { class: "btn primary", onclick: async () => { const r = await api("/api/sheet-script", { method: "POST", json: {} }); script.value = r.script; toast("Script ready: press Copy script"); } }, "Show my script"),
@@ -756,7 +761,7 @@ function formPage(main) {
         const r = await api("/api/sheet-test", { method: "POST" }); result.textContent = r.message; result.style.color = r.ok ? "var(--ok)" : "var(--bad)";
         if (r.ok) {
           const m = r.mapping, sy = (m.symbols || []).join(", ") || "none";
-          mapping.textContent = `Recognised columns - type: ${m.type || "none (all rows = Reminder)"}; heading: ${m.heading || "none"}; body: ${m.body || "none"}; symbols: ${sy}; image: ${m.image || "none"}; sender email: ${m.email || "none (uses the 'someone not on your lists' setting)"}.`;
+          mapping.textContent = `Recognised columns - type: ${m.type || "none (all rows = Reminder)"}; heading: ${m.heading || "none"}; body: ${m.body || "none"}; symbols: ${sy}; image: ${m.image || "none"}; schedule: ${m.sched_date || m.sched_time ? [m.sched_date, m.sched_time].filter(Boolean).join(" + ") : "none (everything prints straight away)"}; sender email: ${m.email || "none (uses the 'someone not on your lists' setting)"}.`;
         } else mapping.textContent = "";
       } }, "Test connection"),
       h("button", { class: "btn", onclick: async () => { await api("/api/sheet-check", { method: "POST" }); toast("Checking the sheet now…"); setTimeout(refresh, 3000); } }, "Check the sheet now")),

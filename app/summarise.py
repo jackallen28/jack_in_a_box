@@ -150,3 +150,74 @@ def summarise(text: str, n: int = 4, max_chars: int = 240) -> list[str]:
     """3-5 sentences, requests and deadlines first, then the rest in the order written."""
     sents = prepare(text)
     return [finish(sents[i], max_chars) for i in pick(sents, n)]
+
+
+# --------------------------------------------------------------------------- bullet points (no AI)
+_LEADIN = re.compile(
+    r"^(?:(?:hi|hello|hey|dear|g'?day)\s+[A-Z][\w'.-]*(?:\s+[A-Z][\w'.-]*)?\s*[,:!-]\s*"
+    r"|(?:thanks|thank you)(?:\s+(?:so much|very much|again))?(?:\s+[A-Z][\w'.-]*)?\s*[,.!-]\s*"
+    r"|(?:separately|additionally|furthermore|moreover|however|anyway|firstly|secondly|thirdly|finally|lastly|also|so|and|but|btw|fyi)\s*[,:]\s*"
+    r"|(?:by the way|just a (?:quick )?(?:note|reminder|heads[- ]up)|just letting you know|please note|note)\s*[,:]?\s*(?:that\s+)?"
+    r"|i(?:'m| am) (?:just )?writing (?:to|about|regarding|re)\s+(?:let you know\s+|inform you\s+|confirm\s+|follow up\s+(?:on|about)\s+)?(?:that\s+)?"
+    r"|i (?:just )?wanted to (?:let you know|remind you|check|confirm|follow up)\s*(?:that|on|about)?\s*"
+    r"|i(?:'d| would) like to (?:let you know|remind you|confirm)\s*(?:that)?\s*"
+    r"|(?:i\s+)?hope (?:you(?:'re| are)|this (?:email )?finds you)[^.,;]*[.,;]\s*)", re.I)
+_REQUEST = re.compile(
+    r"^(?:please|kindly|could you|can you|would you|will you)\b"
+    r"|\b(?:needs? to|has to|have to|must|required to|don't forget|remember to|make sure|rsvp)\b"
+    r"|\bneeds?\s+(?:the|a|an|your|this|these|all|you)\b"
+    r"|\b(?:let (?:me|us) know|get back to (?:me|us)|reply|respond|confirm|submit|return|send|pay|sign|bring|complete|approve|review)\b.{0,60}\b(?:by|before|until|on)\b"
+    r"|\b(?:call|phone|contact|register|book|renew|cancel|apply|rsvp)\b.{0,60}\b(?:by|before|until)\b"
+    r"|^(?:register|call|phone|contact|book|visit|apply|attend|arrange|ensure|fill|download|upload|renew|reply|respond|confirm|submit|sign|bring|return|pay|send|complete|approve|review)\s", re.I)
+_NO_ACTION = re.compile(r"^(?:no need|there(?:'s| is) no need|you (?:do not|don't|do n't) need|nothing (?:to do|needed|required|further)|no action|no reply|no response)\b", re.I)
+
+
+def _cap_first(t: str) -> str:
+    return t[:1].upper() + t[1:] if t else t
+
+
+def _trim(t: str, limit: int = 150) -> str:
+    if len(t) <= limit:
+        return t
+    cut = max(t.rfind(sep, 0, limit) for sep in (", ", "; ", " - ", " and ", " but ", " so "))
+    if cut > limit * 0.5:
+        return t[:cut].rstrip(",;- ") + "."
+    return t[:limit].rsplit(" ", 1)[0].rstrip(",;:") + "..."
+
+
+def bulletise(sentence: str) -> str:
+    """One quoted sentence -> a bullet: greeting/filler removed, requests turned into an action ("[ ] Reply by Friday")."""
+    t = sentence.strip()
+    for _ in range(4):
+        t = re.sub(r"^(?:and|but|so)\s+(?=[A-Za-z])", "", t, flags=re.I)
+        n = _LEADIN.sub("", t, count=1)
+        if n == t:
+            break
+        t = n.strip()
+    if _NO_ACTION.search(t):
+        return ""                      # never print "no need to reply" - you decide that when you read it
+    is_action = bool(_REQUEST.search(t))
+    if is_action:
+        t = re.sub(r"^(?:please|kindly)\s+", "", t, flags=re.I)
+        t = re.sub(r"^(?:could|can|would|will) you(?: please)?\s+", "", t, flags=re.I)
+        t = re.sub(r"\blet (?:me|us) know\b", "reply", t, flags=re.I)
+        t = re.sub(r"\bget back to (?:me|us)\b", "reply", t, flags=re.I)
+        t = t.rstrip("?").rstrip(".")
+    t = _trim(_cap_first(t.strip()))
+    if not is_action and t and t[-1] not in ".!?":
+        t += "."
+    return ("[ ] " + t.rstrip(".")) if is_action else t
+
+
+def bullets(sents: list[str], n: int, owners: list[int] | None = None) -> list[str]:
+    """The key points of the whole email as short bullets: information first, then what you need to do."""
+    idx = pick(sents, n, priority_first=False, owners=owners)
+    info, acts, seen = [], [], set()
+    for i in idx:
+        b = bulletise(sents[i])
+        key = re.sub(r"\W+", " ", b.lower()).strip()
+        if len(key) < 4 or key in seen:
+            continue
+        seen.add(key)
+        (acts if b.startswith("[ ] ") else info).append(b)
+    return info + acts

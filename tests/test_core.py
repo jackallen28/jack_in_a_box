@@ -35,6 +35,12 @@ def env(tmp_path):
     return cfg, svc, MailPoller(cfg, svc)
 
 
+def summary_text(card):
+    """The summary section as one string (it is a list of bullet points; "[ ] " marks an action)."""
+    sec = next(x for x in card.sections if x.key == "summary")
+    return sec.text or "\n".join(sec.items)
+
+
 def mk(subject="", body="", sender="Me <me@example.com>", images=(), mid="<1@x>"):
     m = EmailMessage()
     m["From"], m["To"], m["Message-ID"] = sender, "printer@gmail.com", mid
@@ -182,8 +188,8 @@ def test_forward_summary_and_actions(env):
     assert inc.forwarded is not None and inc.subject == "Q4 supplier invoice dispute"
     (card,), _ = build_cards(inc, cfg.data)
     assert card.kind == "email" and card.heading == "Q4 supplier invoice dispute"
-    summary = next(s for s in card.sections if s.key == "summary").text
-    assert 3 <= summary.count(".") + summary.count("?") <= 5 and "4471" in summary
+    sec = next(s for s in card.sections if s.key == "summary")
+    assert sec.bullets and 2 <= len(sec.items) <= 5 and "4471" in summary_text(card)
     actions = next(s for s in card.sections if s.key == "actions").items
     assert actions == ["Reply to Dave by Friday", "Check invoice 4471"]
     assert card.subline == "From Dave Smith"

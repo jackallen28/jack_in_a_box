@@ -34,7 +34,7 @@ page at the Pi's IP address.
 | `[school]` / `[!]` / `[3d printer]` in the subject or text | that hand-drawn symbol prints above the heading |
 | An email with a photo | **one** printout (all the text in one box) with the photo underneath |
 | Subject line | printed as the bold heading; no subject → no heading |
-| An email **forwarded** to the printer, with your own notes typed above it | `EMAIL` printout: bold subject, a 3-5 sentence summary (**requests and deadlines first**, signature and logos stripped), and an **ACTIONS** checklist from your notes |
+| An email **forwarded** to the printer, with your own notes typed above it | `EMAIL` printout: bold subject, a few **bullet points** summing up the whole email and its history (what it's about, the key facts, then tick-boxes for what you must do; signature and logos stripped), and an **ACTIONS** checklist from your notes. Add `include image` anywhere in your notes to print the email's pictures too |
 | `[reply by friday]` / `[paper due monday]` / `[full]` in your notes above a forward | those answers pulled out of the email under their own headings / the whole message instead of a summary |
 | A Google Calendar event | `EVENT` printout at 7 am the day before (or 7 am the day of, if it was added after the cutoff) |
 
@@ -192,7 +192,7 @@ checks it every minute, **prints each new row once, then deletes the row after i
 in the sheet until it prints). Set it up on the **Google Form** tab, which has every step and a copy button for each piece. In short:
 
 1. **Make the form** with these question titles: `Message or reminder?` (dropdown *Reminder* / *Message*), `Symbol 1`, `Symbol 2`, `Symbol 3` (dropdowns; the tab gives
-   you the list of symbol names to paste), `Heading` (short answer), `Body` (paragraph), `Image` (file upload). Link the form to a Sheet (collecting verified email addresses is optional).
+   you the list of symbol names to paste), `Heading` (short answer), `Body` (paragraph), `Image` (file upload), and optionally `Schedule Send (DATE)` (a *Date* question) and `Schedule Send (TIME)` (a *Time* question). Link the form to a Sheet (collecting verified email addresses is optional).
 2. **Paste the script** the tab generates into the sheet (Extensions -> Apps Script), then Deploy -> Web app -> *Execute as: Me, Who has access: Anyone*.
 3. **Paste the Web app URL** into the tab, switch it on, press *Test connection*.
 
@@ -203,6 +203,13 @@ How a row prints:
   If you share the form and want other people's entries handled like friends' emails instead, change *Who are form submissions treated as?* to
   *Decide by the sender's verified email* (and turn on *Collect email addresses: Verified* in the form): your own address prints straight away, a friend always gets a MESSAGE
   and waits for the button unless you ticked *Skip the queue*, and anyone else follows the *not on your lists* setting (hold / print / ignore).
+* **Schedule Send.** Fill in the two optional questions to print later. Both blank = print straight away. **Date + time** = print at that moment (a moment that has
+  already passed, or is right now, prints straight away). **Time only** = that time on the day the form was sent. **Date only** = that morning at the calendar print time
+  (7:00 by default); today's date alone prints now. The row stays safely in the Google Sheet until it has printed, so a power cut or reboot loses nothing, and the
+  Pi wakes itself at the due time (within about 10 seconds). Times are read in the spreadsheet's own timezone, so set that to yours (Sheet -> File -> Settings).
+  The Google Form tab shows how many are waiting and when the next one prints. Scheduled printouts say "scheduled for ..." in the history notes.
+  **Updating an existing setup needs the new script:** open the tab, *Show my script*, paste it over the old one in Apps Script, Save, then
+  *Deploy -> Manage deployments -> pencil -> Version: New version -> Deploy*. The Web app URL and secret code don't change.
 * A bad or empty row never blocks the ones behind it; a row that couldn't print is left in the sheet for you to see.
 
 No Google password or key is stored on the Pi: only the script's web address and a secret code that the script checks on every request. Google only lets people who are signed in
@@ -243,8 +250,10 @@ REPLY BY FRIDAY            <- each [focus] you typed, with the sentence(s) from 
 Please let me know by Friday so we can close the quarter.
 PAPER DUE MONDAY
 The Year 9 science paper is due Monday 9 November.
-SUMMARY                    <- the rest, requests/deadlines first (never repeats what's above)
-...
+SUMMARY                    <- the WHOLE email and its history as a few bullets (never repeats what's above)
+  • Dave Smith says invoice 4471 ($12,480) is 20 days overdue.
+  • Jack replied that it was paid on Tuesday.
+  [ ] Reply to Dave by Friday
 ACTIONS                    <- your own notes, as a tick-box list
 [ ] Ring Dave about the credit
 ```
@@ -252,17 +261,24 @@ ACTIONS                    <- your own notes, as a tick-box list
   *question*. The box finds the sentences that best match it (words and sense: *reply* also finds "let me know", "get back to", "respond";
   *cost* finds dollar amounts). It only ever quotes the email, and if it isn't mentioned it prints **"Not mentioned in this email."** so
   you know it wasn't missed. `[actions]` and `[deadlines]` pull out the two strongest requests / dates.
+* **The summary is bullets, not quoted sentences.** The box reads the whole forward, every message in the conversation, newest first, and
+  writes a few short bullets: what it is about, the important facts (amounts, dates, places), and a tick-box line for each thing you or
+  someone needs to *do*, with its deadline. It never prints "no action needed" or "no need to reply": you decide that when you read it.
+  The built-in summary does this by rewording and trimming the key sentences; the AI (below) writes them in its own words.
+* **`include image`** (or `[image]`, `add the photo`, `attach pictures` ...) anywhere in your notes prints the pictures that came with
+  the forwarded email, under the summary. Without it, no pictures print. Signature logos and tiny tracking pixels are never printed. The
+  phrase itself is removed from your ACTIONS list. If you ask and the email has no usable picture, the history note says so.
 * **`[full]`** prints the whole message instead of a summary (capped at 2,500 characters, adjustable).
 * **Symbols still work** in the same notes: `[work] [!] [reply by friday]`.
 * **Signatures never print.** Before anything is summarised or printed, the box removes sign-offs and contact blocks ("Kind regards, Dave /
   Accounts Manager / T: 02 ..."), "Sent from my iPhone", legal disclaimers, "CAUTION: external email" banners, older replies in the
   chain ("On Monday ... wrote:", Outlook From/Sent blocks), long links (shown as "(link)") and the `[cid:image001.png]` / `[image: Logo]`
-  placeholders that signature pictures leave behind. Pictures in forwarded emails are never printed. Real text is kept: it only cuts what
+  placeholders that signature pictures leave behind. Real text is kept: it only cuts what
   looks like a signature.
 
 ## Local AI summaries (Raspberry Pi 3B+)
 
-Optional, and the built-in summary is already decent. The AI rewrites the *rest-of-the-email* summary only; `[focus]` and `[full]` never use it.
+Optional, and the built-in summary is already decent. The AI writes the bullet-point summary of the whole email; `[focus]` and `[full]` never use it.
 Expect **roughly 1-3 minutes per forwarded email** on a 3B+. I could not run a real model while building this, so treat that figure
 as an estimate; **Text & sorting -> Test AI summary** tells you the truth on your Pi.
 
@@ -281,6 +297,29 @@ its answer is **thrown away and the built-in summary is used**. The same happens
 Only one summary runs at a time. The history/Try-it notes say whether the AI or the built-in summary was used. The "Try it" preview never uses the AI.
 
 Prefer not to run it on the Pi? Set *AI: Ollama address* to another computer on your network (and `OLLAMA_HOST=0.0.0.0` there).
+**This is the biggest accuracy upgrade there is:** a Mac or PC can run a 3-8 billion parameter model (`ollama pull qwen2.5:3b`, or `llama3.1:8b`)
+in seconds, and those are far better at understanding a whole email thread than the 0.5B model that fits on the Pi. Set *AI: model* to match,
+and raise *AI: worked examples shown first* to 3 or 4.
+
+### "Training" the AI (it can't be retrained on a Pi, but it can be taught by example)
+Real training needs a GPU and gigabytes of RAM; a 1 GB Pi can't do it. What works, and what this box does instead:
+
+* **Worked examples.** `app/summary_examples.json` holds **10 training emails**, each with the bullets a good summary would have (invoice
+  chase, school notice, appointment, newsletter, interview, flight change, lease renewal, tradie quote, decision thread, invitation).
+  Before your real email, the box shows the model the closest one(s) as a worked example (by shared words), which makes a small model copy the
+  *style*: short bullets, facts first, `ACTION:` with a deadline. *AI: worked examples shown first* sets how many (default 1; each one adds
+  a few seconds on a Pi). Add your own: copy an entry, paste in a real email (remove anything private) and write the bullets you wish it
+  had printed. Every bullet must only use facts in its email.
+* **A test set.** The same file has an `eval` list of emails the model is **never shown**, so you can measure honestly:
+
+```bash
+cd ~/jack_in_a_box
+venv/bin/python -m app.evaluate --show                       # your Pi's Ollama and model, 10 emails (about a minute each on a 3B+)
+venv/bin/python -m app.evaluate --builtin                    # the no-AI summary, for comparison
+venv/bin/python -m app.evaluate --url http://192.168.1.20:11434 --model qwen2.5:3b --examples 3    # your Mac
+```
+  For each email it checks: did the AI's answer pass the not-invented check, a sensible number of bullets, every key fact (amount, date,
+  place) present, and a to-do present exactly when the email asks for something. Change a setting, run it again, keep what scores better.
 
 ## Power, cooling and the email mailbox
 
@@ -367,7 +406,7 @@ Fonts are open-licence (SIL OFL): Bungee, Bungee Shade, Monoton, Press Start 2P,
 ## Known limits
 * Gmail only exposes mail via IMAP polling here (default every 30 s), not push.
 * Spelling is best-effort; unusual names and slang may be altered or missed. The list of "never correct" words fixes this over time.
-* Summaries, `[focus]` and `[full]` only read the email text, not attachments (PDF/Word) or pictures. The built-in summary quotes, it doesn't reword.
+* Summaries, `[focus]` and `[full]` only read the email text, not attachments (PDF/Word) or the words inside pictures. The built-in summary trims and rewords sentences from the email; only the AI writes fresh wording.
 * `[focus]` matching is word-and-synonym based, so an unusual phrasing can be missed (it then says "Not mentioned"). Tell me which ones and I'll add synonyms.
 * Local AI, the fan, GPIO and the installers were tested against simulated hardware (a fake Ollama server, mock GPIO pins, a local git remote), not a real Pi.
 * HEIC photos need `pip install pillow-heif`.

@@ -22,6 +22,8 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from functools import lru_cache
+from pathlib import Path
 
 log = logging.getLogger("llm")
 _LOCK = threading.Lock()          # one model run at a time (RAM)
@@ -38,9 +40,31 @@ def _busy_add(n: int) -> None:
     with _busy_lock:
         _busy += n
 
-SYSTEM = ("You write the summary of a forwarded email for a small receipt printout. "
-          "Use ONLY facts stated in the email text. Put requests, actions and deadlines FIRST. "
-          "Write 3 to 5 short, plain sentences. Never add names, dates, numbers or amounts that are not in the text.")
+SYSTEM = ("You summarise a forwarded email for a small printed slip. Read the WHOLE email, then write 3 to 5 short bullet points in your own plain words "
+          "(do not copy sentences or greetings): first what the email is about, then the key facts (amounts, dates, names, places), and last anything the reader "
+          "must DO, starting that bullet with 'ACTION:' and including the deadline. If nothing needs doing, write no ACTION bullet and never say whether a reply is needed. "
+          "Use ONLY facts stated in the email. Never invent names, dates, numbers or amounts.")
+
+EXAMPLES_FILE = Path(__file__).with_name("summary_examples.json")
+
+
+@lru_cache(maxsize=1)
+def load_examples() -> dict:
+    try:
+        return json.loads(EXAMPLES_FILE.read_text("utf-8"))
+    except (OSError, ValueError):
+        return {"train": [], "eval": []}
+
+
+def pick_examples(text: str, k: int) -> list[dict]:
+    """The k worked examples most like this email (by shared words) - shown to the model before the real one."""
+    if k <= 0:
+        return []
+    words = lambda t: set(re.findall(r"[a-z]{4,}", t.lower()))
+    mine = words(text)
+    scored = sorted(load_examples().get("train", []), key=lambda e: -len(mine & words(e["email"])) / (1 + len(words(e["email"])) ** 0.5))
+    return scored[:k]
+
 
 _WEEK = r"mon|tue|wed|thu|fri|sat|sun"
 _MONTH = r"jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec"
@@ -75,6 +99,7 @@ def grounded(sentences: list[str], source: str) -> tuple[bool, list[str]]:
     for s in sentences:
         for w in s.split()[1:]:                      # capitalised mid-sentence words = names
             w2 = re.sub(r"[^\w'-]", "", w)
+            w2 = re.sub(r"(?:'s|’s)$", "", w2)           # "Jack's" is the name Jack
             if len(w2) > 2 and w2[0].isupper() and w2.lower() not in src_words and w2.lower().rstrip("s") not in src_words:
                 bad.append(w2)
     content = [w for w in re.findall(r"[a-z]{4,}", text.lower())]
@@ -84,44 +109,75 @@ def grounded(sentences: list[str], source: str) -> tuple[bool, list[str]]:
 
 
 def _parse(output: str, n: int) -> list[str]:
-    out = re.sub(r"\*\*|__|`", "", output).strip()
-    out = re.sub(r"^\s*(?:summary|email summary|here(?:'s| is)[^:\n]*)\s*:\s*", "", out, flags=re.I)
-    out = re.sub(r"(?m)^\s*(?:[-*•]|\d{1,2}[.)])\s+", "", out)
-    out = re.sub(r"\s+", " ", out)
-    sents = [s.strip() for s in re.split(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(])", out) if len(s.split()) >= 3]
-    sents = [s if s[-1] in ".!?" else s + "." for s in sents]
-    return sents[:n]
+    """The model's answer -> bullets.  "ACTION: ..." becomes "[ ] ..." (printed with a tick-box)."""
+    out = re.sub(r"\*\*|__|`", "", output or "").strip()
+    out = re.sub(r"^\s*(?:bullet points|summary|email summary|here(?:'s| is)[^:\n]*)\s*:\s*", "", out, flags=re.I)
+    lines = [re.sub(r"^\s*(?:[-*•]|\d{1,2}[.)])\s*", "", l).strip() for l in out.split("\n") if l.strip()]
+    if len(lines) < 2:                                              # one paragraph: cut it into sentences instead
+        lines = [x.strip() for x in re.split(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(])", re.sub(r"\s+", " ", out)) if x.strip()]
+    bullets = []
+    for l in lines:
+        m = re.match(r"^(?:ACTION|TO ?DO|DO)\s*[:\-]\s*(.+)$", l, re.I)
+        text = (m.group(1) if m else l).strip()
+        if len(text.split()) < 3 or re.match(r"(?i)(?:no (?:action|need|reply|response)|nothing (?:to do|needed|required))\b", text):
+            continue                                                # never "no action needed" - the reader decides that
+        text = text.rstrip(".") if m else (text if text[-1] in ".!?" else text + ".")
+        bullets.append(("[ ] " + text[:1].upper() + text[1:]) if m else text[:1].upper() + text[1:])
+    return bullets[:n]
 
 
-def excerpt(sentences: list[str], limit_chars: int, owners: list[int] | None = None) -> str:
-    """The sentences worth showing the model: requests/deadlines first in rank, then in the order written."""
-    from .summarise import pick
-    chosen = pick(sentences, min(len(sentences), 12), priority_first=False, owners=owners)
-    out, used = [], 0
-    for i in chosen:
-        if used + len(sentences[i]) > limit_chars:
-            continue
-        out.append(sentences[i])
-        used += len(sentences[i]) + 1
-    return " ".join(out)
+def condense(sentences: list[str], limit_chars: int, owners: list[int] | None = None, labels: list[str] | None = None) -> str:
+    """The WHOLE email for the model, message by message in order.  Only if it won't fit are the least useful
+    sentences dropped (never the tail), so the model still sees how the email began and ended."""
+    from .focus import action_score
+    from .summarise import rank
+    keep = list(range(len(sentences)))
+    if sum(len(x) + 1 for x in sentences) > limit_chars:
+        scores = rank(sentences)
+        droppable = sorted((i for i in keep if action_score(sentences[i]) < 1.0), key=lambda i: scores[i])
+        total = sum(len(x) + 1 for x in sentences)
+        for i in droppable:
+            if total <= limit_chars:
+                break
+            keep.remove(i)
+            total -= len(sentences[i]) + 1
+        while total > limit_chars and len(keep) > 3:                # still too long: drop the weakest remaining
+            worst = min(keep, key=lambda i: scores[i])
+            keep.remove(worst)
+            total -= len(sentences[worst]) + 1
+    if not owners or len(set(owners)) < 2:
+        return " ".join(sentences[i] for i in keep)
+    groups: dict[int, list[str]] = {}
+    for i in keep:
+        groups.setdefault(owners[i], []).append(sentences[i])
+    lines = []
+    for o in sorted(groups):                                        # newest message first, as in the thread
+        lines.append(f"{labels[o] if labels and o < len(labels) else ('LATEST MESSAGE' if o == 0 else 'EARLIER')}:")
+        lines.append(" ".join(groups[o]))
+    return "\n".join(lines)
 
 
 # --------------------------------------------------------------------------- the call
-def run(sentences: list[str], n: int, cfg: dict, context: str = "", owners: list[int] | None = None) -> tuple[list[str] | None, dict]:
-    """Ask the model.  Returns (summary or None, info) - info explains what happened (for logs and the Test button)."""
+def run(sentences: list[str], n: int, cfg: dict, context: str = "", owners: list[int] | None = None,
+        labels: list[str] | None = None) -> tuple[list[str] | None, dict]:
+    """Ask the model for bullet points.  Returns (bullets or None, info) - info explains what happened."""
     info: dict = {"used_ai": False, "seconds": 0.0, "reason": ""}
     if not sentences:
         info["reason"] = "nothing to summarise"
         return None, info
-    text = excerpt(sentences, int(cfg.get("max_input_chars", 1600)), owners)
+    text = condense(sentences, int(cfg.get("max_input_chars", 3000)), owners, labels)
     head = f"{context.strip()}\n" if context.strip() else ""      # e.g. "From: Dave Smith / Subject: Invoice" (also allowed in the answer)
+    ask = lambda body: {"role": "user", "content": f"EMAIL:\n{body}\n\nBULLET POINTS:"}
+    messages = [{"role": "system", "content": SYSTEM}]
+    for ex in pick_examples(head + text, int(cfg.get("examples", 1))):      # worked examples ("training data")
+        messages += [ask(ex["email"]), {"role": "assistant", "content": "\n".join("- " + b for b in ex["bullets"])}]
+    messages.append(ask(f"{head}{text}"))
     payload = {
         "model": cfg.get("model", "qwen2.5:0.5b"), "stream": False,
         "keep_alive": cfg.get("keep_alive", 0),
-        "messages": [{"role": "system", "content": SYSTEM},
-                     {"role": "user", "content": f"EMAIL:\n{head}{text}\n\nWrite the summary now (requests and deadlines first):"}],
+        "messages": messages,
         "options": {"temperature": 0.1, "num_ctx": int(cfg.get("num_ctx", 2048)),
-                    "num_predict": int(cfg.get("num_predict", 160)), "num_thread": 4},
+                    "num_predict": int(cfg.get("num_predict", 220)), "num_thread": 4},
     }
     t0 = time.time()
     _busy_add(1)
@@ -140,7 +196,8 @@ def run(sentences: list[str], n: int, cfg: dict, context: str = "", owners: list
         if len(sents) < 1 or sum(len(s) for s in sents) < 25:
             info["reason"] = "the model's answer was empty or too short"
         else:
-            ok, bad = grounded(sents, f"{context} " + " ".join(sentences))
+            plain = [re.sub(r"^\[ \] ", "", b) for b in sents]
+            ok, bad = grounded(plain, f"{context} {' '.join(labels or [])} " + " ".join(sentences))
             if ok:
                 info["used_ai"] = True
                 return sents, info
@@ -152,8 +209,9 @@ def run(sentences: list[str], n: int, cfg: dict, context: str = "", owners: list
     return None, info
 
 
-def summarise(sentences: list[str], n: int, cfg: dict, context: str = "", owners: list[int] | None = None) -> tuple[list[str] | None, dict]:
-    return run(sentences, n, cfg, context, owners)
+def summarise(sentences: list[str], n: int, cfg: dict, context: str = "", owners: list[int] | None = None,
+              labels: list[str] | None = None) -> tuple[list[str] | None, dict]:
+    return run(sentences, n, cfg, context, owners, labels)
 
 
 # --------------------------------------------------------------------------- status / test (for the settings page)

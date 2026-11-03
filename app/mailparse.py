@@ -35,6 +35,7 @@ class Incoming:
     fwd_subject: str = ""
     fwd_date: str = ""
     images: list[Image.Image] = field(default_factory=list)
+    fwd_images: list[Image.Image] = field(default_factory=list)   # pictures in a FORWARDED email (printed only if you say "include image")
     auth_ok: bool = True
     guessed_forward: bool = False       # "Fwd:" subject but no forward marker: split note/forward by a guess
 
@@ -230,18 +231,23 @@ def parse(raw: bytes, *, min_image_px: int = 150, max_images: int = 3) -> Incomi
         inc.body = text.strip()
     inc.subject = clean_subject(raw_subject, strip_fwd=inc.forwarded is not None)
 
-    if inc.forwarded is None:  # images only matter for plain reminders
-        for part in msg.walk():
-            if len(inc.images) >= max_images:
-                break
-            if part.get_content_maintype() == "image" or (
-                    part.get_content_type() == "application/octet-stream"
-                    and str(part.get_filename() or "").lower().endswith((".heic", ".heif", ".jpg", ".jpeg", ".png"))):
-                try:
-                    data = part.get_payload(decode=True)
-                except Exception:
-                    continue
-                im = _load_image(data or b"", min_image_px)
-                if im is not None:
-                    inc.images.append(im)
+    attached, inline = [], []
+    for part in msg.walk():
+        if len(attached) + len(inline) >= max_images * 3:
+            break
+        if part.get_content_maintype() == "image" or (
+                part.get_content_type() == "application/octet-stream"
+                and str(part.get_filename() or "").lower().endswith((".heic", ".heif", ".jpg", ".jpeg", ".png"))):
+            try:
+                data = part.get_payload(decode=True)
+            except Exception:
+                continue
+            im = _load_image(data or b"", min_image_px)          # skips signature logos / tracking pixels
+            if im is not None:
+                (attached if part.get_content_disposition() == "attachment" else inline).append(im)
+    if inc.forwarded is None:
+        inc.images = (attached + inline)[:max_images]
+    else:
+        # real attachments beat inline pictures, which are mostly signature graphics
+        inc.fwd_images = (attached or inline)[:max_images]
     return inc
