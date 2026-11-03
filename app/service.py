@@ -10,13 +10,13 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from . import aifeedback, plugins
 from .config import DATA_DIR, ConfigStore
 from .db import DB
 from .models import Card
-from .printer import PrinterError, print_image
+from .printer import PrinterError, print_image, send_raw
 from .render import render_card
 
 log = logging.getLogger("service")
@@ -136,8 +136,29 @@ class Service:
         self.wake.set()
         return jid
 
+    def submit_raw(self, data: bytes, title: str, source: str = "driver", hold: bool = False) -> int:
+        """Queue printer data made by another computer's own driver (ESC/POS).  It prints exactly as sent."""
+        from .render import pt, text_block
+        self.touch()
+        cur = self.db.execute("INSERT INTO jobs(created, kind, source, title, notes, status) VALUES (?,?,?,?,?,?)",
+                              (datetime.now().isoformat(timespec="seconds"), "raw", source, title[:120], "[]", "held" if hold else "pending"))
+        jid = cur.lastrowid
+        (self.hist_dir / f"{jid}.raw").write_bytes(data)
+        label = text_block(f"Printed by another computer's driver\n{max(1, len(data) // 1024)} KB\n{title}", "courier-prime", pt(10), 540)
+        card = Image.new("L", (576, label.height + 40), 255)         # a stand-in picture for the history page
+        card.paste(label, (18, 20))
+        ImageDraw.Draw(card).rectangle([0, 0, 575, card.height - 1], outline=0, width=2)
+        path = self.hist_dir / f"{jid}.png"
+        card.save(path)
+        self.db.execute("UPDATE jobs SET png=? WHERE id=?", (path.name, jid))
+        self.wake.set()
+        return jid
+
     def reprint(self, job_id: int) -> int | None:
         row = self.db.one("SELECT * FROM jobs WHERE id=?", (job_id,))
+        if row and row["kind"] == "raw":
+            raw = self.hist_dir / f"{job_id}.raw"
+            return self.submit_raw(raw.read_bytes(), row["title"], "reprint") if raw.exists() else None
         if not row or not row["png"]:
             return None
         cur = self.db.execute(
@@ -189,8 +210,11 @@ class Service:
         pc = self.cfg.data["printer"]
         path = self.hist_dir / (job["png"] or "")
         try:
-            img = Image.open(path).convert("1")
-            print_image(img, pc)
+            if job["kind"] == "raw":                         # another computer's printer driver: forward its bytes untouched
+                send_raw((self.hist_dir / f"{job['id']}.raw").read_bytes(), pc)
+            else:
+                img = Image.open(path).convert("1")
+                print_image(img, pc)
         except (PrinterError, OSError) as e:
             attempts = job["attempts"] + 1
             self.printer_error = str(e)
@@ -232,6 +256,7 @@ class Service:
             still = self.db.one("SELECT COUNT(*) n FROM jobs WHERE png=? AND id!=?", (row["png"], row["id"]))
             if row["png"] and still["n"] == 0:
                 (self.hist_dir / row["png"]).unlink(missing_ok=True)
+            (self.hist_dir / f"{row['id']}.raw").unlink(missing_ok=True)
         self.db.execute("DELETE FROM jobs WHERE created<? AND status NOT IN ('pending','scheduled','held')", (cutoff,))
         self.db.execute("DELETE FROM seen WHERE ts<?", (cutoff,))
         self.db.execute("DELETE FROM sheet_rows WHERE first_seen<? AND status IN ('deleted','ignored','empty')", (cutoff,))

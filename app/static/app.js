@@ -922,6 +922,7 @@ function airprintPage(main) {
     status.replaceChildren(...[
       h("div", { style: `font-weight:600;color:${colour}` }, !on ? "AirPrint is OFF. Tick “Share the printer on my network”, then Save." : (s.message || s.state)),
       s.url ? h("div", {}, "Address (if a device asks): ", h("code", {}, s.url)) : null,
+      s.raw_port ? h("div", {}, "Raw printer port for Epson drivers: ", h("code", {}, String(s.raw_port))) : null,
       s.last_job ? h("div", { class: "muted" }, `Last print job: ${s.last_job}`) : null,
       ...(s.warnings || []).map(w => h("div", { style: "color:var(--warn)" }, "⚠ " + w)),
       s.pdf === false ? h("div", { style: "color:var(--warn)" }, "⚠ PDF printing needs the pypdfium2 package. Run the update command (it installs it).") : null].filter(Boolean));
@@ -946,5 +947,13 @@ function airprintPage(main) {
       h("li", {}, h("strong", {}, "Mac: "), "File → Print → Printer → Nearby Printers. If it isn't listed: System Settings → Printers & Scanners → + → the IP tab, address ", h("code", {}, "<the address above without ipp://>"), ", protocol IPP, queue ", h("code", {}, "ipp/print"), "."),
       h("li", {}, h("strong", {}, "Windows 10/11: "), "Settings → Bluetooth & devices → Printers & scanners → Add device. If it doesn't appear: “Add manually” → “Select a shared printer by name” → ", h("code", {}, "http://<the Pi's address>:631/ipp/print"), "."),
       h("li", {}, h("strong", {}, "Android: "), "it finds the printer by itself (Settings → Connected devices → Printing → Default Print Service), then use Print from any app.")),
+    h("h4", { style: "margin:12px 0 4px" }, "Using the printer's own Epson driver (prints exactly as if it were plugged into your Mac)"),
+    h("p", { class: "small" }, "Tick “Allow the printer's own Epson driver” above and Save. Then the Mac's Epson driver talks to this box as if it were the printer, and the box passes its data straight through (in the same print queue, so it never clashes with other printouts)."),
+    h("ol", { class: "small" },
+      h("li", {}, "Install Epson's printer driver for the TM-T82II on the Mac (from Epson's support site: search “TM-T82II”, choose macOS; for newer macOS use Epson's “TM Series Printer Driver for Mac”)."),
+      h("li", {}, "System Settings → Printers & Scanners → Add Printer (+) → the ", h("strong", {}, "IP"), " tab."),
+      h("li", {}, "Address: the Pi's address (", h("code", {}, "pi.local"), " or its number). Protocol: ", h("strong", {}, "Internet Printing Protocol – IPP"), ", Queue: ", h("code", {}, "ipp/print"), ". (Or Protocol ", h("strong", {}, "HP Jetdirect – Socket"), " with no queue, which uses the raw port.)"),
+      h("li", {}, "Use: ", h("strong", {}, "Select Software…"), " → choose the ", h("strong", {}, "EPSON TM-T82II"), " driver (not “AirPrint”). Add. Set the paper size and cutter in the printer's Options.")),
+    h("p", { class: "small muted" }, "Windows works the same way: Epson's driver with a Standard TCP/IP port to the Pi's address and port 9100 (raw). The driver can't read the printer's status lamps through this box, so Epson's status monitor won't show paper-out."),
     h("p", { class: "small muted" }, "Only devices on your own network can print (turn that off in Settings at your own risk). It's plain IPP, not encrypted, which is fine on a home network. I built this without a real iPhone/Mac/PC to test against, so if one doesn't find it or prints oddly, tell me which and what happened.")));
 }

@@ -690,3 +690,190 @@ def test_a_separate_device_really_discovers_it_over_mdns():
         pytest.skip("no mDNS traffic in this environment")
     assert found.get("_ipp._tcp.local.") == ["Discovery Test Box._ipp._tcp.local."]
     assert found.get("_universal._sub._ipp._tcp.local.") == ["Discovery Test Box._ipp._tcp.local."]
+
+
+# ----------------------------------------------------------------------------- the printer's OWN driver (Epson's), passed through untouched
+EPSON_JOB = b"\x1b@" + b"\x1b!\x08Hello from the Epson driver\n" + bytes(range(256)) * 6 + b"\x1d\x56\x42\x00"          # init, text, binary, cut
+
+
+@pytest.fixture()
+def raw_rig(rig, tmp_path, monkeypatch):
+    """The AirPrint rig with the Epson-driver route switched on, and the 'printer' writing to a temp folder."""
+    from app import printer
+    monkeypatch.setattr(printer, "DATA_DIR", tmp_path)
+    cfg, svc, server = rig
+    server.shutdown()
+    d = cfg.data
+    d["airprint"].update(raw_enabled=True, raw_port=0)
+    cfg.replace(d)
+    server.reconcile()
+    return cfg, svc, server, tmp_path / "dummy"
+
+
+def test_the_raw_format_is_only_offered_when_you_allow_it(rig):
+    cfg, svc, server = rig
+    info = {"uuid": "u", "started": 0, "queued": 0, "admin_url": "http://pi:8080/"}
+    off = dict((n, v) for _, n, v in ap.printer_attributes(ap.Settings(), "ipp://pi/ipp/print", info))
+    on = dict((n, v) for _, n, v in ap.printer_attributes(ap.Settings(raw_enabled=True), "ipp://pi/ipp/print", info))
+    assert ap.RAW_FORMAT not in [v for _, v in off["document-format-supported"]] and ap.RAW_FORMAT in [v for _, v in on["document-format-supported"]]
+    assert ap.RAW_FORMAT not in ap.txt_record(ap.Settings(), {"uuid": "u", "admin_url": ""})["pdl"] and ap.RAW_FORMAT in ap.txt_record(ap.Settings(raw_enabled=True), {"uuid": "u", "admin_url": ""})["pdl"]
+    assert ask(server, print_job(EPSON_JOB, ap.RAW_FORMAT)).operation == ipp.FORMAT_NOT_SUPPORTED          # switched off: refused
+    assert ask(server, print_job(EPSON_JOB, "application/octet-stream")).operation == ipp.FORMAT_NOT_SUPPORTED
+
+
+@pytest.mark.parametrize("fmt", [ap.RAW_FORMAT, "application/octet-stream"])
+def test_epson_driver_data_over_ipp_is_forwarded_byte_for_byte(raw_rig, fmt):
+    cfg, svc, server, dummy = raw_rig
+    r = ask(server, print_job(EPSON_JOB, fmt, name="Receipt from Pages"))
+    assert r.operation == ipp.OK and r.get(ipp.G_JOB, "job-state") in (3, 5)
+    j = svc.db.one("SELECT id, kind, source, status, title, png FROM jobs")
+    assert (j["kind"], j["source"], j["status"], j["title"]) == ("raw", "driver", "pending", "Receipt from Pages")
+    assert (svc.hist_dir / f"{j['id']}.raw").read_bytes() == EPSON_JOB
+    assert Image.open(svc.hist_dir / j["png"]).width == 576                                           # a stand-in picture for the history
+    svc.process_pending()
+    assert svc.db.one("SELECT status FROM jobs")["status"] == "printed"
+    assert [p.read_bytes() for p in dummy.glob("*.bin")] == [EPSON_JOB]                              # exactly what the driver made
+    assert ask(server, request(ipp.GET_JOB_ATTRIBUTES, [("job-id", ipp.integer(1))])).get(ipp.G_JOB, "job-state") == 9
+
+
+def test_documents_are_still_drawn_by_us_when_the_driver_route_is_on(raw_rig):
+    cfg, svc, server, dummy = raw_rig
+    assert ask(server, print_job(jpeg(), "application/octet-stream")).operation == ipp.OK                  # a JPEG sent as octet-stream: still a picture
+    assert ask(server, print_job(pdf(1), "application/pdf")).operation == ipp.OK
+    assert ask(server, print_job(b"Plain text note\nline two", "application/octet-stream")).operation == ipp.OK
+    assert [r["kind"] for r in svc.db.all("SELECT kind FROM jobs ORDER BY id")] == ["airprint"] * 3
+
+
+def test_raw_jobs_share_the_queue_in_order_and_can_be_held_cancelled_and_reprinted(raw_rig):
+    cfg, svc, server, dummy = raw_rig
+    ask(server, print_job(jpeg(), "image/jpeg", name="first"))
+    ask(server, print_job(EPSON_JOB, ap.RAW_FORMAT, name="second"))
+    svc.process_pending()
+    assert [r["status"] for r in svc.db.all("SELECT status FROM jobs ORDER BY id")] == ["printed", "printed"]
+    again = svc.reprint(2)                                                                           # Reprint on the history page
+    assert svc.db.one("SELECT kind FROM jobs WHERE id=?", (again,))["kind"] == "raw" and (svc.hist_dir / f"{again}.raw").read_bytes() == EPSON_JOB
+    svc.process_pending()
+    assert [p.read_bytes() for p in dummy.glob("*.bin")] == [EPSON_JOB, EPSON_JOB]
+    d = cfg.data
+    d["airprint"]["hold_for_button"] = True
+    cfg.replace(d)
+    ask(server, print_job(EPSON_JOB, ap.RAW_FORMAT, name="held one"))
+    assert svc.db.one("SELECT status FROM jobs ORDER BY id DESC")["status"] == "held"
+
+
+def test_an_old_raw_job_is_cleaned_up_with_its_data_file(raw_rig):
+    cfg, svc, server, dummy = raw_rig
+    ask(server, print_job(EPSON_JOB, ap.RAW_FORMAT))
+    svc.process_pending()
+    svc.db.execute("UPDATE jobs SET created='2000-01-01T00:00:00'")
+    svc.cleanup()
+    assert svc.db.all("SELECT id FROM jobs") == [] and not list(svc.hist_dir.glob("*.raw"))
+
+
+def send_to_raw_port(server, data, close=True, idle=None):
+    s = socket.create_connection(("127.0.0.1", server.status["raw_port"]), timeout=5)
+    try:
+        s.sendall(data)
+        if close:
+            s.shutdown(socket.SHUT_WR)
+    except OSError:
+        pass                                                 # the server already hung up (refused, or too big): fine
+    return s
+
+
+def wait_for(cond, seconds=5):
+    import time
+    end = time.time() + seconds
+    while time.time() < end:
+        if cond():
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def test_the_raw_port_takes_a_network_style_print_job(raw_rig):
+    cfg, svc, server, dummy = raw_rig
+    assert server.status["raw_port"] and "Raw printer port" not in server.status["message"]
+    send_to_raw_port(server, EPSON_JOB).close()
+    assert wait_for(lambda: svc.db.one("SELECT COUNT(*) n FROM jobs")["n"] == 1)
+    j = svc.db.one("SELECT id, kind, source, title FROM jobs")
+    assert (j["kind"], j["source"]) == ("raw", "driver") and j["title"].startswith("Print job from 127.0.0.1")
+    assert (svc.hist_dir / f"{j['id']}.raw").read_bytes() == EPSON_JOB
+
+
+def test_a_raw_job_that_goes_quiet_without_closing_is_still_printed(raw_rig, monkeypatch):
+    cfg, svc, server, dummy = raw_rig
+    monkeypatch.setattr(ap, "RAW_IDLE_SECONDS", 0.3)
+    s = send_to_raw_port(server, EPSON_JOB, close=False)
+    try:
+        assert wait_for(lambda: svc.db.one("SELECT COUNT(*) n FROM jobs")["n"] == 1)
+    finally:
+        s.close()
+
+
+def test_the_raw_port_refuses_strangers_and_oversized_jobs_and_empty_connections(raw_rig, monkeypatch):
+    cfg, svc, server, dummy = raw_rig
+    send_to_raw_port(server, b"").close()                                    # a port scan: nothing to print
+    d = cfg.data
+    d["airprint"]["max_job_mb"] = 1
+    cfg.replace(d)
+    send_to_raw_port(server, b"\x1b@" + b"0" * (3 * 1024 * 1024)).close()
+    monkeypatch.setattr(ap, "is_allowed", lambda ip, st: False)
+    send_to_raw_port(server, EPSON_JOB).close()
+    import time
+    time.sleep(0.6)
+    assert svc.db.one("SELECT COUNT(*) n FROM jobs")["n"] == 0
+
+
+def test_the_raw_port_is_closed_unless_you_allow_it_and_closes_again_when_you_switch_it_off(rig):
+    cfg, svc, server = rig
+    assert server.status.get("raw_port") is None and server._rawd is None
+    d = cfg.data
+    d["airprint"].update(raw_enabled=True, raw_port=0)
+    cfg.replace(d)
+    server.reconcile()
+    assert server._rawd is not None and server.status["raw_port"]
+    d = cfg.data
+    d["airprint"]["raw_enabled"] = False
+    cfg.replace(d)
+    server.reconcile()
+    assert server._rawd is None
+
+
+def test_a_raw_port_that_is_taken_is_reported_but_the_ipp_route_still_works(tmp_path, monkeypatch):
+    monkeypatch.setattr(ap, "zeroconf_available", lambda: False)
+    blocker = socket.socket()
+    blocker.bind(("0.0.0.0", 0))
+    blocker.listen()
+    cfg = ConfigStore(tmp_path / "c.json")
+    d = cfg.data
+    d["printer"]["backend"] = "dummy"
+    d["airprint"].update(enabled=True, port=0, raw_enabled=True, raw_port=blocker.getsockname()[1])
+    cfg.replace(d)
+    s = ap.AirPrintService(cfg, Service(cfg, tmp_path))
+    s.reconcile()
+    try:
+        assert s.status["state"] == "ok" and s._rawd is None and any("raw printer port" in w for w in s.status["warnings"])
+        assert ask(s, request(ipp.GET_PRINTER_ATTRIBUTES)).operation == ipp.OK
+    finally:
+        s.shutdown()
+        blocker.close()
+
+
+def test_the_printer_never_gets_two_jobs_at_once():
+    import threading
+    from app import printer
+    order = []
+    release = threading.Event()
+    printer.PRINTER_LOCK.acquire()                                          # a ticket is "printing"
+
+    def raw_job():
+        printer.send_raw(b"\x1b@x", {"backend": "dummy"})
+        order.append("raw done")
+    t = threading.Thread(target=raw_job)
+    t.start()
+    t.join(0.3)
+    assert t.is_alive() and order == []                                    # the Epson job waits its turn
+    printer.PRINTER_LOCK.release()
+    t.join(5)
+    assert order == ["raw done"]

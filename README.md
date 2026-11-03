@@ -405,6 +405,23 @@ announces the printer over Bonjour (mDNS).
 * **Honest caveat:** I built and tested this against an independent IPP library and real multicast announcements on the same machine, and with raster files I generated, but
   **not with a real iPhone, Mac, Windows PC or Android phone**. If a device can't find it or prints something odd, tell me which device and what you saw.
 
+### Using the printer's own Epson driver on a Mac or Windows PC ("prints exactly as if it were plugged in")
+AirPrint redraws your document for the receipt paper. If you'd rather the computer use **Epson's own driver** (its fonts, paper sizes, cutter and receipt layout), tick
+**AirPrint -> Allow the printer's own Epson driver** and Save. The computer's driver then makes the printer data itself, and this box passes it **straight through,
+byte for byte** to the printer (over the cable you already have to it, USB or Ethernet). It goes through the same print queue (history, Cancel, Reprint, ordering, retry if the printer is off),
+and a lock makes sure it never mixes with another printout.
+
+* **Mac:** install Epson's driver for the TM-T82II (Epson's support site, search "TM-T82II", choose macOS; newer macOS versions use Epson's "TM Series Printer Driver for Mac", and I
+  couldn't confirm from here which package covers the TM-T82II on your macOS, so check the supported-models list). Then *System Settings -> Printers & Scanners -> Add Printer (+) -> IP tab*:
+  Address = the Pi's address (`pi.local`), Protocol **Internet Printing Protocol - IPP**, Queue `ipp/print` (or Protocol **HP Jetdirect - Socket**, which uses the raw port). *Use:* **Select Software...**
+  and pick the **EPSON TM-T82II** driver (not "AirPrint"). Set the paper size and cutter in the printer's Options.
+* **Windows:** install Epson's driver, add a printer with a *Standard TCP/IP port* to the Pi's address, port **9100**, raw.
+* **How it works:** over IPP the Mac sends the driver's data as `application/vnd.cups-raw` (or octet-stream); on the raw port (9100) a job is whatever arrives until the sender closes or goes quiet for 4 seconds.
+  Only when this option is on are those accepted; documents (PDF, photos...) are still drawn by the box as before.
+* **Limits and risks:** raw printer data can do anything the printer's command language can (including changing its settings), so this is **off by default** and, like AirPrint, only
+  accepts computers on your own network. Epson's status monitor can't see paper-out or cover-open through this box (it only forwards the data), and a driver that insists on two-way
+  status may complain. I couldn't test with a real Mac and Epson's driver, only with simulated drivers sending ESC/POS data, so tell me what you see.
+
 ## Power, cooling and the email mailbox
 
 **What it costs to run:** a Pi 3B+ idles around 2-3 W, roughly 20-25 kWh a year, which is about **$6-9 a year** at ~30c/kWh. The printer only

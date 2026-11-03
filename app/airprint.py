@@ -19,6 +19,7 @@ import ipaddress
 import logging
 import re
 import socket
+import socketserver
 import threading
 import time
 import uuid
@@ -37,6 +38,8 @@ from .service import Service
 log = logging.getLogger("airprint")
 
 IPP_PATHS = ("/", "/ipp", "/ipp/print", "/ipp/print/")
+RAW_FORMAT = "application/vnd.cups-raw"        # what CUPS (Mac/Linux) calls "printer data from the driver, send it untouched"
+RAW_IDLE_SECONDS = 4                           # a raw (port 9100) job is finished when the sender goes quiet this long (or closes)
 FALLBACK_PORT = 6310
 PRINTER_MODEL = "Epson TM-T82II receipt printer"
 MEDIA_A6, MEDIA_4X6 = "iso_a6_105x148mm", "om_small-photo_100x150mm"
@@ -58,6 +61,8 @@ class Settings:
     autocrop: str = "margins"          # none | vertical | margins
     dither: str = "auto"               # auto | text | photo
     max_height_mm: int = 700
+    raw_enabled: bool = False          # let another computer use the printer's OWN driver (Epson's): its ESC/POS data is passed through untouched
+    raw_port: int = 9100               # ...also accepted on this raw TCP port (like a network receipt printer)
     width_mm: float = 72
     width_dots: int = 576              # the printer's printable width (from the Printer settings)
 
@@ -72,6 +77,7 @@ class Settings:
                 except (TypeError, ValueError):
                     pass                                         # a bad value in the settings file: keep the default
         s.port = max(0, min(65535, s.port))
+        s.raw_port = max(0, min(65535, s.raw_port))
         s.autocrop = s.autocrop if s.autocrop in ("none", "vertical", "margins") else "margins"
         s.dither = s.dither if s.dither in ("auto", "text", "photo") else "auto"
         s.max_pages, s.max_copies = max(1, s.max_pages), max(1, s.max_copies)
@@ -97,9 +103,23 @@ def zeroconf_available() -> bool:
         return False
 
 
-def supported_formats() -> list[str]:
+def supported_formats(raw: bool = False) -> list[str]:
     return (["application/pdf"] if pdf_available() else []) + ["image/jpeg", "image/png", "image/urf", "image/pwg-raster", "text/plain",
-                                                                "application/octet-stream"]
+                                                                "application/octet-stream"] + ([RAW_FORMAT] if raw else [])
+
+
+def looks_like_escpos(data: bytes) -> bool:
+    """Printer data starts with an ESC / GS / DLE command ("ESC @" = initialise) - that is what Epson's driver sends."""
+    return data.lstrip(b"\x00\r\n")[:1] in (b"\x1b", b"\x1d", b"\x10")
+
+
+def is_raw(data: bytes, declared: str) -> bool:
+    """Is this printer data from the printer's own driver rather than a document for us to draw?  Only when you've allowed it."""
+    if declared == RAW_FORMAT:
+        return True
+    if declared != "application/octet-stream":
+        return False
+    return looks_like_escpos(data) or sniff(data, declared) == "application/octet-stream"       # unknown binary: the driver's data
 
 
 def is_allowed(ip: str, st: Settings) -> bool:
@@ -242,7 +262,7 @@ def _media_col(w: int, h: int) -> list:
 
 def printer_attributes(st: Settings, uri: str, info: dict) -> list[tuple[str, str, list]]:
     """(group, name, values) for Get-Printer-Attributes; group = 'desc' (printer-description) or 'tmpl' (job-template)."""
-    formats = supported_formats()
+    formats = supported_formats(st.raw_enabled)
     sizes = ipp.merge(ipp.coll(x_dimension=ipp.integer(10000), y_dimension=ipp.integer(15000)),
                       ipp.coll(x_dimension=ipp.integer(10500), y_dimension=ipp.integer(14800)),
                       ipp.coll(x_dimension=ipp.integer(int(st.width_mm * 100)), y_dimension=ipp.rng(3000, 200000)))
@@ -344,7 +364,7 @@ def txt_record(st: Settings, info: dict) -> dict[str, str]:
     return {
         "txtvers": "1", "qtotal": "1", "rp": "ipp/print", "ty": f"{st.name}", "product": "(TM-T82II)", "note": "Receipt printer",
         "adminurl": info["admin_url"], "priority": "0", "usb_MFG": "EPSON", "usb_MDL": "TM-T82II",
-        "pdl": ",".join(supported_formats()), "URF": "CP1,W8,RS300,V1.4", "Color": "F", "Duplex": "F", "Copies": "T", "Collate": "F",
+        "pdl": ",".join(supported_formats(st.raw_enabled)), "URF": "CP1,W8,RS300,V1.4", "Color": "F", "Duplex": "F", "Copies": "T", "Collate": "F",
         "Scan": "F", "Fax": "F", "Binary": "T", "Transparent": "T", "TBCP": "F", "Staple": "F", "Punch": "F", "Sort": "F",
         "kind": "document", "PaperMax": "<legal-A4", "UUID": info["uuid"], "air": "none", "printer-state": "3", "printer-type": "0x809046",
     }
@@ -438,6 +458,7 @@ class AirPrintService(threading.Thread):
         self.status: dict = {"state": "disabled", "message": "AirPrint is off.", "port": None, "url": "", "name": "", "advertising": False,
                              "jobs": 0, "last_job": "", "address": "", "warnings": []}
         self._httpd: ThreadingHTTPServer | None = None
+        self._rawd: socketserver.ThreadingTCPServer | None = None
         self._thread: threading.Thread | None = None
         self._bonjour = Bonjour()
         self._sig: tuple | None = None
@@ -466,7 +487,7 @@ class AirPrintService(threading.Thread):
 
     def reconcile(self) -> None:
         st = self.settings()
-        sig = (st.port, st.name)
+        sig = (st.port, st.name, st.raw_enabled, st.raw_port)
         if st.enabled and (sig != self._sig or (self._httpd is None and time.time() >= self._retry_at)):
             self.shutdown()
             self.start_server(st)
@@ -479,6 +500,7 @@ class AirPrintService(threading.Thread):
 
     def start_server(self, st: Settings) -> None:
         warnings: list[str] = []
+        sig_now = (st.port, st.name, st.raw_enabled, st.raw_port)
         handler = self._handler_class()
         httpd = None
         ports = [st.port] + ([FALLBACK_PORT] if st.port == 631 else [])
@@ -494,15 +516,17 @@ class AirPrintService(threading.Thread):
                 err = f"{e.strerror or e}"
         if httpd is None:
             self.status.update(state="error", message=f"Couldn't listen on port {st.port}: {err}", advertising=False)
-            self._sig = (st.port, st.name)
+            self._sig = sig_now
             self._retry_at = time.time() + 60                # try again in a minute (or at once if you change the settings)
             return
         self._httpd = httpd
-        self._sig = (st.port, st.name)
+        self._sig = sig_now
         self._thread = threading.Thread(target=httpd.serve_forever, name="airprint-http", daemon=True)
         self._thread.start()
         port = httpd.server_address[1]
-        self.status.update(state="ok", port=port, name=st.name, warnings=warnings)
+        self.status.update(state="ok", port=port, name=st.name, warnings=warnings, raw_port=None)
+        if st.raw_enabled:
+            self.start_raw(st, warnings)
         self.refresh_addresses(st)
         log.info("AirPrint: '%s' listening on port %d", st.name, port)
 
@@ -533,7 +557,55 @@ class AirPrintService(threading.Thread):
             warnings.append(f"Bonjour announcement failed ({type(e).__name__}: {e}). You can still add the printer by address.")
             self.status.update(advertising=False, warnings=warnings, message=f"Listening on {self.status['url']} (not announced).")
 
+    def start_raw(self, st: Settings, warnings: list[str]) -> None:
+        """The raw TCP port (9100): drivers that print to "a network receipt printer" send their data here."""
+        service = self
+
+        class RawHandler(socketserver.BaseRequestHandler):
+            def handle(self):
+                ip = self.client_address[0]
+                cur = service.settings()
+                if not is_allowed(ip, cur):
+                    log.warning("AirPrint: refused raw printer data from %s (not on your network)", ip)
+                    return
+                data, limit = bytearray(), cur.max_job_mb * 1024 * 1024
+                self.request.settimeout(30)
+                try:
+                    while True:
+                        chunk = self.request.recv(65536)
+                        if not chunk:
+                            break
+                        data += chunk
+                        if len(data) > limit:
+                            log.warning("AirPrint: raw job from %s is too big, ignored", ip)
+                            return
+                        self.request.settimeout(RAW_IDLE_SECONDS)             # quiet for a few seconds = the job is complete
+                except (socket.timeout, OSError):
+                    pass
+                if data and service.queued_count() < cur.max_queued:
+                    service.svc.submit_raw(bytes(data), f"Print job from {ip}", source="driver", hold=cur.hold_for_button)
+                    service.status.update(jobs=service.status["jobs"] + 1, last_job=f"printer driver data ({len(data) // 1024 + 1} KB) from {ip}")
+                    log.info("AirPrint: raw printer data (%d bytes) from %s", len(data), ip)
+
+        class RawServer(socketserver.ThreadingTCPServer):
+            allow_reuse_address = True
+            daemon_threads = True
+
+        try:
+            self._rawd = RawServer(("0.0.0.0", st.raw_port), RawHandler)
+        except OSError as e:
+            warnings.append(f"Couldn't open the raw printer port {st.raw_port}: {e.strerror or e}. The driver route through the print dialog (IPP) still works.")
+            self._rawd = None
+            return
+        threading.Thread(target=self._rawd.serve_forever, name="airprint-raw", daemon=True).start()
+        self.status["raw_port"] = self._rawd.server_address[1]
+        log.info("AirPrint: raw printer port %d open", self.status["raw_port"])
+
     def shutdown(self) -> None:
+        raw, self._rawd = self._rawd, None
+        if raw is not None:
+            raw.shutdown()
+            raw.server_close()
         self._bonjour.stop()
         httpd, self._httpd = self._httpd, None
         if httpd is not None:
@@ -734,7 +806,7 @@ class AirPrintService(threading.Thread):
 
     def _submit(self, req: ipp.Request, st: Settings, uri: str, version, client: str) -> bytes:
         op, rid = req.operation, req.request_id
-        formats = supported_formats()
+        formats = supported_formats(st.raw_enabled)
         declared = str(req.get(ipp.G_OPERATION, "document-format", "application/octet-stream")).lower()
         if declared not in formats:
             return self._error(ipp.FORMAT_NOT_SUPPORTED, rid, f"{declared} is not supported", version)
@@ -759,6 +831,12 @@ class AirPrintService(threading.Thread):
             job.error = "no document"
             return self._error(ipp.BAD_REQUEST, rid, "no document data", version)
         job.k_octets = max(1, len(data) // 1024)
+        if st.raw_enabled and is_raw(data, declared):               # the printer's own driver (Epson's) made this: pass it through untouched
+            job.pages, job.copies = 1, 1
+            job.ids.append(self.svc.submit_raw(data, f"{job.name}", source="driver", hold=st.hold_for_button))
+            self.status.update(jobs=self.status["jobs"] + 1, last_job=f"{job.name} (printer driver data, {job.k_octets} KB) from {client}")
+            log.info("AirPrint: raw printer data '%s' (%d bytes) from %s", job.name, len(data), client)
+            return ipp.build_response(ipp.OK, rid, [(ipp.G_OPERATION, self._op_attrs()), (ipp.G_JOB, self.job_attrs(job, uri))], version)
         job.copies = max(1, min(st.max_copies, int(req.get(ipp.G_JOB, "copies", 1) or 1)))
         try:
             pages = load_pages(data, declared, st)

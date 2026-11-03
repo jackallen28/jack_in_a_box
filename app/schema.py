@@ -243,6 +243,8 @@ SECTIONS = {
         F("airprint.enabled", "Share the printer on my network (AirPrint)", "bool", "Phones, tablets, Macs, Windows PCs and Android devices on your network will see the printer and can print to it."),
         F("airprint.name", "Printer name shown on devices", help="e.g. Jack in a Box"),
         F("airprint.port", "Port", "number", "631 is the standard. If it's taken, 6310 is used automatically; devices find it by themselves.", min=1, max=65535),
+        F("airprint.raw_enabled", "Allow the printer's own Epson driver (Mac / Windows)", "bool", "Lets a computer add this printer with Epson's driver, so it prints exactly as if plugged into that computer. The driver's printer data is passed straight through. Off by default."),
+        F("airprint.raw_port", "Raw printer port for that driver", "number", "9100 is what network receipt printers use. The IPP route in the print dialog needs no extra port.", min=1, max=65535),
         F("airprint.hold_for_button", "Hold AirPrint pages until I press the message button", "bool", "Off = they print straight away."),
         F("airprint.allow_any_network", "Also accept print jobs from outside my own network", "bool", "Leave OFF unless you know why: anyone who can reach the Pi could print."),
         F("airprint.autocrop", "Trim blank paper", "select", options=opts(

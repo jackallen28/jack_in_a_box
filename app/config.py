@@ -242,6 +242,8 @@ DEFAULTS: dict = {
         "port": 631,                # if 631 isn't available (not root, or CUPS is there) 6310 is used; clients find it either way
         "allow_any_network": False, # False: only devices on your own network (private addresses) can print
         "hold_for_button": False,   # True: AirPrint pages wait for the message button, like friends' messages
+        "raw_enabled": False,       # True: another computer can use the printer's OWN (Epson) driver; its data is passed through untouched
+        "raw_port": 9100,           # ...also accepted on this raw TCP port, like a network receipt printer
         "max_pages": 10,            # pages printed from one document
         "max_copies": 5,
         "max_job_mb": 30,

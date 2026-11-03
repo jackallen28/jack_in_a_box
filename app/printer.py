@@ -14,6 +14,7 @@ from __future__ import annotations
 import glob
 import os
 import socket
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -23,6 +24,7 @@ from PIL import Image, ImageOps
 from .config import DATA_DIR
 
 ESC_INIT = b"\x1b@"
+PRINTER_LOCK = threading.Lock()          # one job at a time on the wire: our own tickets and raw jobs from another computer's Epson driver
 BAND_ROWS = 256
 
 
@@ -163,12 +165,28 @@ def check(cfg: dict) -> tuple[bool, str]:
     return False, f"Unknown backend {backend!r}"
 
 
-def send(data: bytes, img: Image.Image, cfg: dict) -> None:
+def send(data: bytes, img: Image.Image | None, cfg: dict) -> None:
+    """Send finished printer data.  Holds the printer lock so two jobs never interleave."""
+    with PRINTER_LOCK:
+        _send(data, img, cfg)
+
+
+def send_raw(data: bytes, cfg: dict) -> None:
+    """Bytes straight from another computer's printer driver (e.g. Epson's), forwarded untouched."""
+    with PRINTER_LOCK:
+        _send(data, None, cfg)
+
+
+def _send(data: bytes, img: Image.Image | None, cfg: dict) -> None:
     backend, device = resolve_backend(cfg)
     if backend == "dummy":
         d = DATA_DIR / "dummy"
         d.mkdir(parents=True, exist_ok=True)
-        img.save(d / f"{datetime.now():%Y%m%d-%H%M%S-%f}.png")
+        stamp = f"{datetime.now():%Y%m%d-%H%M%S-%f}"
+        if img is not None:
+            img.save(d / f"{stamp}.png")
+        else:
+            (d / f"{stamp}.bin").write_bytes(data)
         return
     try:
         if backend == "file":
