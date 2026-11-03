@@ -68,7 +68,7 @@ $("#logout").addEventListener("click", async () => { await api("/api/logout", { 
 
 /* ---------------------------------------------------------------- tabs */
 const TABS = [
-  ["dashboard", "Dashboard"], ["print", "Print"], ["messages", "Messages"], ["symbols", "Symbols"], ["templates", "Templates"], ["email", "Email"], ["calendar", "Calendar"],
+  ["dashboard", "Dashboard"], ["print", "Print"], ["messages", "Messages"], ["symbols", "Symbols"], ["power", "Power & fan"], ["templates", "Templates"], ["email", "Email"], ["calendar", "Calendar"],
   ["text", "Text & sorting"], ["rules", "Rules"], ["printer", "Printer"], ["integrations", "Integrations"],
   ["playground", "Try it"], ["account", "Account"],
 ];
@@ -79,7 +79,7 @@ function renderTabs() {
 function go(tab) {
   TAB = tab; clearInterval(POLL); POLL = null; renderTabs();
   const main = $("#main"); main.replaceChildren();
-  ({ dashboard, print: printPage, messages, symbols, templates, email: () => simple("email", "Email account"), calendar, text: () => simple("text", "Text, dates & summaries"),
+  ({ dashboard, print: printPage, messages, symbols, power: powerPage, templates, email: () => simple("email", "Email account"), calendar, text: () => simple("text", "Text, dates & summaries"),
      rules, printer: () => simple("printer", "Printer"), integrations, playground, account }[tab])(main);
   window.scrollTo(0, 0);
 }
@@ -240,6 +240,7 @@ function dashboard(main) {
       st.printer.held ? h("div", { class: "banner" }, `${st.printer.held} message${st.printer.held > 1 ? "s" : ""} waiting for the button  `,
         h("button", { class: "btn small primary", onclick: async () => { await api("/api/release", { method: "POST" }); toast("Printing waiting messages"); refresh(); } }, "Print them now"),
         h("button", { class: "btn small danger", onclick: async () => { if (confirm("Throw away all waiting messages?")) { await api("/api/discard-held", { method: "POST" }); refresh(); } } }, "Discard all")) : null,
+      st.cpu_temp != null ? h("div", {}, `CPU ${st.cpu_temp.toFixed(0)}°C` + (st.fan && st.fan.state === "ok" ? ` · fan ${st.fan.fan_on ? "ON" : "off"}` : "")) : null,
       h("div", {}, `Button: ${st.button.state === "ok" ? "ready - " : ""}${st.button.message}`),
       h("div", {}, `Mailbox: ${st.mail.state}${st.mail.last_check ? " (checked " + st.mail.last_check + ")" : ""}${st.mail.error ? " - " + st.mail.error : ""}`),
       h("div", {}, `Calendar: ${st.calendar.last_sync ? "synced " + st.calendar.last_sync + ", " + st.calendar.events + " events" : "not synced yet"}${st.calendar.error ? " - " + st.calendar.error : ""}`)));
@@ -606,6 +607,41 @@ function symbols(main) {
             canvas.toBlob(b => { addFromBlob(b, "Drawing"); clear(); }, "image/png"); } }, "Add my drawing"))))));
 
   api("/api/icons").then(r => { window.__builtin = r.icons.filter(i => i.builtin).map(i => ({ id: i.id, name: i.name, short: i.short })); draw(); });
+}
+
+/* ---------------------------------------------------------------- power & fan */
+function powerPage(main) {
+  const stat = h("div", { class: "small" });
+  main.append(h("div", { class: "card" }, h("h2", {}, "Power & cooling"), stat));
+  async function refresh() {
+    const r = await api("/api/power-status");
+    const th = r.throttle || {};
+    stat.replaceChildren(...[
+      h("div", {}, r.cpu_temp != null ? `CPU temperature: ${r.cpu_temp.toFixed(1)}°C` : "CPU temperature: not available"),
+      h("div", {}, `Fan: ${r.fan.message || ""}${r.fan.state === "ok" ? (r.fan.fan_on ? "  - ON (" + (r.fan.reason || "") + ")" : "  - off") : ""}`),
+      h("div", {}, `Idle for ${r.idle_minutes} min.  ${r.power.message || ""}`),
+      th.undervoltage || th.undervoltage_seen ? h("div", { class: "err" }, "⚠ The Pi has reported low voltage: use a good 5 V / 2.5 A power supply and a short, thick cable.") : null,
+      th.throttled || th.throttled_seen ? h("div", { class: "err" }, "⚠ The Pi has slowed itself down (too hot or low voltage). A fan will help.") : null].filter(Boolean));
+  }
+  refresh(); POLL = setInterval(() => refresh().catch(() => {}), 5000);
+
+  main.append(h("div", { class: "card" }, h("h3", {}, "Cooling fan"), form(SCHEMA.sections.fan),
+    h("details", {}, h("summary", {}, "Wiring guide"), h("div", { class: "in small" },
+      h("p", {}, "A GPIO pin gives only a few mA, so it switches the fan through a transistor; it can't power it. For a small 5 V fan:"),
+      h("pre", {}, "Pi 5V (pin 2/4) ──┬────────────┐\n                  │         fan (+)\n               diode           │\n         (1N4001, stripe       │\n          towards 5V)        fan (−)\n                  │            │\n                  └────────────┴── transistor collector\n\nGPIO22 (pin 15) ── 1 kΩ ── transistor base      (NPN: 2N2222 / BC337)\nGND (pin 14) ───────────── transistor emitter"),
+      h("p", {}, "Or use a ready-made fan driver / MOSFET module with a 3.3 V logic input. Never connect a fan straight to a GPIO pin."))),
+    h("div", { class: "small muted", style: "margin-top:8px" }, "Automatic mode runs the fan when the CPU is hot and for the whole time the AI is writing a summary, then lets it cool and switches off.")));
+
+  main.append(h("div", { class: "card" }, h("h3", {}, "Power off when idle"), form(SCHEMA.sections.power),
+    h("div", { class: "small" }, h("p", {}, h("strong", {}, "Read this: "), "a Pi 3B+ has no sleep mode and no clock to wake itself, so “deep sleep” means ", h("strong", {}, "switched off"),
+      ". While it's off nothing prints and the button does nothing; email just waits in Gmail and everything catches up when it's back on. It never powers off while anything is waiting, an AI summary is running, or a calendar reminder is due soon."),
+      h("p", {}, h("strong", {}, "Waking it: "), "wire a push button between ", h("strong", {}, "GPIO3 (pin 5) and GND (pin 6)"), " - pressing it boots a halted Pi. ",
+        "Tip: set the message button's pin to ", h("code", {}, "3"), " on the Messages tab and the same button does both jobs (release messages when on, wake when off). Or re-plug the power."),
+      h("p", {}, "Prefer scheduled nights off? Put the Pi on a smart plug/timer: it simply restarts in the morning and catches up."))));
+
+  main.append(h("div", { class: "card small" }, h("h3", {}, "Lower idle power"),
+    "Run ", h("code", {}, "bash deploy/eco-mode.sh"), " on the Pi (then reboot) to turn off the LEDs, Bluetooth and HDMI and put Wi-Fi in power-save. ",
+    "The saving is modest (a few hundred milliwatts); the Pi already slows its CPU when idle. ", h("code", {}, "bash deploy/eco-mode.sh --undo"), " reverses it."));
 }
 
 /* ---------------------------------------------------------------- account */

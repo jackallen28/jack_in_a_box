@@ -12,8 +12,7 @@ from .mailparse import Incoming
 from .models import Card, Section
 from . import emailclean
 from .focus import find_focus, parse_focus
-from .summarise import finish, prepare
-from .summarise import summarise as summarise_text
+from .summarise import finish, pick, prepare
 from .textproc import _dedupe, build_items, clean_body, fix_text, pop_leading_tags, sort_items, split_blocks
 
 
@@ -81,22 +80,29 @@ def email_card(inc: Incoming, cfg: dict, now: datetime, use_ai: bool = True) -> 
     sections: list[Section] = []
     card_notes: list[str] = []
 
+    shown: set[str] = set()                      # sentences already printed under a [focus] heading
     for f in focus[:6]:
-        found = [finish(x) for x in find_focus(f, sentences)]
+        hits = find_focus(f, sentences)
+        shown.update(hits)
+        found = [finish(x) for x in hits]
         sections.append(Section("focus", label=f.upper()[:40], text=" ".join(found) if found else "Not mentioned in this email."))
 
     if want_full:
         text = _cap(message, int(scfg.get("max_full_chars", 2500))) or "(The forwarded email had no readable text.)"
         sections.append(Section("full", text=text))
     else:
+        rest = [x for x in sentences if x not in shown]      # don't repeat what the focus answers already say
         out = None
-        if scfg.get("backend") == "ollama" and use_ai and sentences:
+        if scfg.get("backend") == "ollama" and use_ai and rest:
             ctx = f"From: {_name_only(inc.fwd_from)}\nSubject: {inc.subject or inc.fwd_subject}" if inc.fwd_from else f"Subject: {inc.subject}"
-            out, info = llm.summarise(sentences, n, cfg["llm"], ctx)
+            out, info = llm.summarise(rest, n, cfg["llm"], ctx)
             card_notes.append(f"AI summary ({info['seconds']}s)" if out else f"AI not used: {info['reason']}")
-        if not out:
-            out = summarise_text(message, n)
-        sections.append(Section("summary", text=" ".join(out) if out else "(The forwarded email had no readable text.)"))
+        if not out and rest:
+            out = [finish(rest[i]) for i in pick(rest, n)]
+        if out:
+            sections.append(Section("summary", text=" ".join(out)))
+        elif not focus:
+            sections.append(Section("summary", text="(The forwarded email had no readable text.)"))
 
     subject, s_ids = icon_lib.extract_tags(inc.subject, cfg)
     heading = subject or re.sub(r"^(?:fwd?|fw|re)\s*:\s*", "", inc.fwd_subject or "", flags=re.I).strip()

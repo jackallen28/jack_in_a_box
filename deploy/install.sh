@@ -42,11 +42,12 @@ for unit in jack-in-a-box-update.service jack-in-a-box-update.timer; do
 done
 chmod +x "$DIR/deploy/update.sh"
 
-# The updater runs as YOU (not root). Its only extra power is these two exact commands:
+# The app runs as YOU (not root). Its only extra powers are these exact commands (restart itself, run the updater,
+# and power the Pi off when you enable "idle power-off"):
 SYSTEMCTL="$(readlink -f "$(command -v systemctl)")"
 SUDOERS_TMP="$(mktemp)"
-printf '%s ALL=(root) NOPASSWD: %s restart jack-in-a-box.service, %s start --no-block jack-in-a-box-update.service\n' \
-  "$RUN_USER" "$SYSTEMCTL" "$SYSTEMCTL" > "$SUDOERS_TMP"
+printf '%s ALL=(root) NOPASSWD: %s restart jack-in-a-box.service, %s start --no-block jack-in-a-box-update.service, %s poweroff\n' \
+  "$RUN_USER" "$SYSTEMCTL" "$SYSTEMCTL" "$SYSTEMCTL" > "$SUDOERS_TMP"
 if sudo visudo -cf "$SUDOERS_TMP" >/dev/null; then
   sudo install -m 440 -o root -g root "$SUDOERS_TMP" /etc/sudoers.d/jack-in-a-box
 else

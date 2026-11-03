@@ -120,7 +120,10 @@ SECTIONS = {
           "For Gmail this must be an App Password (Google Account > Security > 2-Step Verification > App passwords), not your normal password."),
         F("email.folder", "Folder to watch"),
         F("email.poll_seconds", "Check every (seconds)", "number", min=10, max=3600),
-        F("email.after", "After printing", "select", options=opts(("mark_read", "Mark as read"), ("move", "Move to a folder"))),
+        F("email.after", "After printing an email", "select", options=opts(
+            ("delete", "Delete it (Gmail: moved to Trash, which empties itself after 30 days)"),
+            ("mark_read", "Mark as read and keep it"), ("move", "Move to a folder"))),
+        F("email.trash_folder", "Trash folder (for 'delete')", help="Gmail: [Gmail]/Trash. Leave BLANK for other providers to delete permanently. Only emails that were actually printed or queued are deleted."),
         F("email.move_folder", "Folder to move to", help="Created if it doesn't exist."),
         F("email.allowed_senders", "Your addresses (admin)", "lines",
           "One per line: a full address (me@gmail.com) or a whole domain (@mycompany.com). Mail from these prints "
@@ -207,6 +210,22 @@ SECTIONS = {
         F("button.led_pin", "LED pin (BCM/GPIO number)", "number", "Through a resistor. Default 27 (physical pin 13). 0 = no LED.", min=0, max=27),
         F("button.led_active_high", "LED lights when the pin is HIGH", "bool", "Turn off if your LED is wired to 3.3 V instead of to GND."),
         F("button.blink_seconds", "Flash speed (seconds on/off)", "number", min=0.1, max=3, step=0.1),
+    ],
+    "fan": [
+        F("fan.enabled", "Control a cooling fan from a GPIO pin", "bool"),
+        F("fan.pin", "Fan pin (BCM/GPIO number)", "number", "To the transistor/MOSFET that switches the fan. Default 22 (physical pin 15).", min=2, max=27),
+        F("fan.mode", "Mode", "select", options=opts(("auto", "Automatic (when hot, and during AI summaries)"), ("always", "Always on"), ("off", "Always off"))),
+        F("fan.on_temp", "Turn on at (°C)", "number", "A Pi 3B+ starts slowing itself down at 80°C.", min=40, max=80),
+        F("fan.off_temp", "Turn off below (°C)", "number", "Lower than the on temperature so the fan doesn't flick on and off.", min=30, max=75),
+        F("fan.during_ai", "Also run the fan during every AI summary", "bool", "The CPU works flat out and heats quickly; this cools it before it throttles."),
+        F("fan.min_on_seconds", "Run for at least (seconds)", "number", min=0, max=3600),
+        F("fan.active_high", "Fan switches on when the pin is HIGH", "bool", "Untick for an active-low relay/driver board."),
+    ],
+    "power": [
+        F("power.idle_shutdown_hours", "Power off after being idle for (hours, 0 = never)", "number",
+          "A Pi 3B+ can't sleep or wake itself, so this fully powers it OFF. While off nothing prints (email waits safely in Gmail). Wake it with the GPIO3 button or by re-plugging power.", min=0, max=168, step=0.5),
+        F("power.min_uptime_minutes", "Never power off in the first (minutes after boot)", "number", min=5, max=600),
+        F("power.keep_awake_before_calendar_hours", "Stay on if a calendar reminder prints within (hours)", "number", min=0, max=72),
     ],
     "updates": [
         F("updates.enabled", "Install updates automatically", "bool",

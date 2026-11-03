@@ -139,6 +139,20 @@ def test_card_has_focus_then_summary_then_actions():
     assert "Dave Smith" not in card.sections[2].text and "02 9999" not in card.sections[2].text
 
 
+def test_summary_does_not_repeat_what_the_focus_blocks_already_say():
+    (card,), _ = build_cards(fwd("[reply by friday] [paper due monday]"), CFG)
+    summary = next(s for s in card.sections if s.key == "summary").text
+    assert "let me know by Friday" not in summary and "science paper is due Monday" not in summary
+    assert "invoice 4471" in summary or "bank details" in summary                  # the rest of the email
+
+
+def test_no_empty_summary_when_the_focus_answers_cover_everything():
+    (card,), _ = build_cards(fwd("[parking]", "Please send the signed form by Monday."), CFG)
+    assert [s.key for s in card.sections] == ["focus"] or "summary" in [s.key for s in card.sections]
+    (card,), _ = build_cards(fwd("[signed form]", "Please send the signed form by Monday."), CFG)
+    assert [s.key for s in card.sections] == ["focus"]                              # nothing left over to summarise
+
+
 def test_unfound_focus_is_reported_not_hidden():
     (card,), _ = build_cards(fwd("[parking]"), CFG)
     assert card.sections[0].label == "PARKING" and card.sections[0].text == "Not mentioned in this email."

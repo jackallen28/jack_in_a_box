@@ -40,8 +40,12 @@ class Service:
         self.stop = threading.Event()
         self.printer_error = ""
         self.last_print = ""
+        self.last_activity = time.time()      # last print/email/button/web action (for idle power-off)
         self._rate_logged = False
         self._worker: threading.Thread | None = None
+
+    def touch(self) -> None:
+        self.last_activity = time.time()
 
     # ---------------------------------------------------------------- submit
     def render(self, card: Card) -> Image.Image:
@@ -50,6 +54,7 @@ class Service:
         return render_card(card, c["templates"].get(name) or c["templates"]["reminder"], c["printer"], c["icons"])
 
     def submit(self, card: Card, copies: int = 1, hold: bool = False) -> list[int]:
+        self.touch()
         img = self.render(card)
         ids = []
         for _ in range(max(1, copies)):
@@ -74,6 +79,7 @@ class Service:
 
     def release_held(self) -> int:
         """Button pressed: let every waiting message print (oldest first)."""
+        self.touch()
         n = self.held_count()
         if n:
             self.db.execute("UPDATE jobs SET status='pending' WHERE status='held'")

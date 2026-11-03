@@ -31,7 +31,7 @@ log = logging.getLogger("web")
 PUBLIC_API = {"/api/state", "/api/login", "/api/setup", "/api/print"}
 
 
-def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button) -> Flask:
+def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button, fan=None, power=None) -> Flask:
     app = Flask(__name__, static_folder=str(APP_DIR / "static"), static_url_path="/static")
     app.secret_key = cfg.data["web"]["secret_key"]
     app.config.update(SESSION_COOKIE_SAMESITE="Strict", SESSION_COOKIE_HTTPONLY=True,
@@ -48,6 +48,8 @@ def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button) 
             return jsonify(error="login required"), 401
         if request.method != "GET" and request.headers.get("X-Requested-With") != "fetch":
             return jsonify(error="bad request"), 400
+        if request.method != "GET":
+            svc.touch()                      # a person is using the page: not idle
         return None
 
     @app.after_request
@@ -184,6 +186,8 @@ def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button) 
         new["icons"] = clean_icons(new.get("icons"))
         cfg.replace(new)
         button.reconfigure()
+        if fan is not None:
+            fan.reconfigure()
         poller.kick.set()
         cal.kick.set()
         return jsonify(public_config())
@@ -204,9 +208,19 @@ def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button) 
     # ------------------------------------------------------------ status / history
     @app.get("/api/status")
     def status():
+        from .power import read_cpu_temp
         return jsonify(printer=svc.status(), mail=poller.status, calendar=cal.status, button=button.status,
+                       cpu_temp=read_cpu_temp(), fan=(fan.status if fan is not None else None),
                        now=datetime.now().strftime("%a %d %b %H:%M"),
                        email_configured=bool(cfg.data["email"]["username"] and cfg.data["email"]["enabled"]))
+
+    @app.get("/api/power-status")
+    def power_status():
+        from .power import read_cpu_temp, read_throttled
+        fs = dict(fan.status) if fan is not None else {"state": "disabled", "message": "Fan control is not running."}
+        ps = dict(power.status) if power is not None else {"enabled": False, "message": "Idle power-off is not running."}
+        return jsonify(cpu_temp=read_cpu_temp(), fan=fs, power=ps, throttle=read_throttled(),
+                       idle_minutes=int((__import__("time").time() - svc.last_activity) / 60))
 
     @app.get("/api/log")
     def get_log():

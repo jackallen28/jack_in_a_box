@@ -149,7 +149,8 @@ DEFAULTS: dict = {
         "password": "",
         "folder": "INBOX",
         "poll_seconds": 30,
-        "after": "mark_read",  # mark_read | move
+        "after": "delete",     # delete | mark_read | move   (delete = Gmail Trash, kept 30 days)
+        "trash_folder": "[Gmail]/Trash",   # blank on non-Gmail providers = delete for good
         "move_folder": "Printed",
         "allowed_senders": [],       # YOU (admins): reminders print immediately
         "require_auth_pass": True,
@@ -215,6 +216,21 @@ DEFAULTS: dict = {
         "notes_chars": 300,
     },
     "updates": {"enabled": True},
+    "fan": {
+        "enabled": False,
+        "pin": 22,                  # BCM. Drive a transistor/MOSFET that switches the fan - never the fan itself.
+        "mode": "auto",             # auto | always | off
+        "on_temp": 60,              # C
+        "off_temp": 50,
+        "during_ai": True,          # run the fan for the whole of every AI summary
+        "min_on_seconds": 60,
+        "active_high": True,
+    },
+    "power": {
+        "idle_shutdown_hours": 0,   # 0 = never (default). Otherwise power off after this long with nothing happening.
+        "min_uptime_minutes": 30,
+        "keep_awake_before_calendar_hours": 12,
+    },
     # Symbols: [school], [!] ... see app/icons.py.  Built-ins are always available; this holds your changes.
     "icons": {
         "disabled": [],      # built-in ids you've switched off

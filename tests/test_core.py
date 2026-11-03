@@ -343,6 +343,9 @@ class FakeIMAP:
         self.flags = {}
         self.logged_out = False
         self.created = []
+        self.copied = []                          # (uid, folder)
+        self.expunged = []
+        self.copy_ok = True
         FakeIMAP.instances.append(self)
 
     def login(self, u, p):
@@ -361,7 +364,17 @@ class FakeIMAP:
         if cmd == "STORE":
             self.flags.setdefault(args[0], []).append(args[2])
             return "OK", [b""]
+        if cmd == "COPY":
+            self.copied.append((args[0], args[1].strip('"')))
+            return ("OK" if self.copy_ok else "NO"), [b""]
         raise AssertionError(cmd)
+
+    def expunge(self):
+        for uid, fl in list(self.flags.items()):
+            if "(\\Deleted)" in fl and uid in self.messages:
+                del self.messages[uid]
+                self.expunged.append(uid)
+        return "OK", [b""]
 
     def create(self, f):
         self.created.append(f)
@@ -374,7 +387,7 @@ def test_poll_once_end_to_end(env, monkeypatch):
     import app.mailbox as mailbox
     cfg, svc, poller = env
     d = cfg.data
-    d["email"].update(username="printer@gmail.com", password="app-pass", enabled=True)
+    d["email"].update(username="printer@gmail.com", password="app-pass", enabled=True, after="mark_read")
     cfg.replace(d)
     msgs = {b"11": mk("Chores", "wash dishes and walk the dog", mid="<m1@x>"),
             b"12": mk("Spam", "buy pills", sender="evil@spam.com", mid="<m2@x>")}
@@ -455,3 +468,76 @@ def test_british_and_australian_spellings_are_left_alone_but_real_typos_still_fi
     for ok in ("tyres", "organise", "centre", "favourite", "colour", "cheque", "mum", "arvo"):
         assert ok in joined, (ok, joined)
     assert items("wahs the dishs and relpy to emial", cfg)[0].text.lower().startswith("wash the dishes")
+
+
+# ---------------------------------------------------------------- delete after printing
+def run_poll(env, monkeypatch, msgs, **email_cfg):
+    import app.mailbox as mailbox
+    cfg, svc, poller = env
+    d = cfg.data
+    d["email"].update(username="printer@gmail.com", password="app-pass", enabled=True, **email_cfg)
+    d["friends"] = [{"name": "Sarah", "email": "sarah@x.com", "bypass_queue": False, "enabled": True}]
+    cfg.replace(d)
+    fake = FakeIMAP(msgs)
+    monkeypatch.setattr(mailbox.imaplib, "IMAP4_SSL", lambda *a, **k: fake)
+    poller.poll_once()
+    return fake, svc, poller
+
+
+def test_printed_and_queued_emails_are_deleted_via_trash_but_nothing_else(env, monkeypatch):
+    msgs = {b"1": mk("Chores", "wash dishes", mid="<d1@x>"),                                     # printed
+            b"2": mk("Hello", "hi there", sender="Sarah <sarah@x.com>", mid="<d2@x>"),           # friend: held for the button
+            b"3": mk("Buy", "pills", sender="evil@spam.com", mid="<d3@x>"),                      # not allowed -> keep
+            b"4": mk("", "", mid="<d4@x>")}                                                       # empty -> keep
+    fake, svc, _ = run_poll(env, monkeypatch, msgs)                                              # default: delete
+    assert sorted(fake.expunged) == [b"1", b"2"]
+    assert sorted(fake.messages) == [b"3", b"4"]                                                 # spam + empty are still there
+    assert {c[1] for c in fake.copied} == {"[Gmail]/Trash"} and {c[0] for c in fake.copied} == {b"1", b"2"}   # Trash first: recoverable
+    assert all("(\\Seen)" in fake.flags[u] for u in (b"1", b"2", b"3", b"4"))                    # everything marked read
+    assert [r["status"] for r in svc.db.all("SELECT status FROM jobs ORDER BY id")] == ["pending", "held"]
+
+
+def test_if_copying_to_trash_fails_the_email_is_kept_and_never_reprinted(env, monkeypatch):
+    import app.mailbox as mailbox
+    cfg, svc, poller = env
+    msgs = {b"1": mk("Chores", "wash dishes", mid="<k1@x>")}
+    fake, svc, _ = run_poll(env, monkeypatch, msgs)
+    # first attempt: Trash copy refused
+    fake2 = FakeIMAP(msgs)
+    fake2.copy_ok = False
+    monkeypatch.setattr(mailbox.imaplib, "IMAP4_SSL", lambda *a, **k: fake2)
+    svc.db.execute("DELETE FROM seen")
+    svc.db.execute("DELETE FROM jobs")
+    poller.poll_once()
+    assert fake2.expunged == [] and b"1" in fake2.messages and svc.db.one("SELECT COUNT(*) n FROM jobs")["n"] == 1
+    # later the Trash works again: the email is recognised as already printed, deleted, and NOT printed twice
+    fake3 = FakeIMAP(fake2.messages)
+    monkeypatch.setattr(mailbox.imaplib, "IMAP4_SSL", lambda *a, **k: fake3)
+    poller.poll_once()
+    assert fake3.expunged == [b"1"] and svc.db.one("SELECT COUNT(*) n FROM jobs")["n"] == 1
+
+
+def test_an_email_that_crashes_processing_is_not_deleted(env, monkeypatch):
+    cfg, svc, poller = env
+    monkeypatch.setattr(poller, "handle", lambda raw: (_ for _ in ()).throw(RuntimeError("boom")))
+    fake, *_ = run_poll(env, monkeypatch, {b"1": mk("Chores", "wash dishes", mid="<c1@x>")})
+    assert fake.expunged == [] and b"1" in fake.messages
+
+
+def test_dropped_friend_message_is_not_deleted(env, monkeypatch):
+    cfg, svc, poller = env
+    d = cfg.data
+    d["messages"]["max_held"] = 1
+    cfg.replace(d)
+    msgs = {b"1": mk("one", "x", sender="sarah@x.com", mid="<m1@x>"), b"2": mk("two", "y", sender="sarah@x.com", mid="<m2@x>")}
+    fake, *_ = run_poll(env, monkeypatch, msgs)
+    assert fake.expunged == [b"1"] and b"2" in fake.messages            # the one that didn't fit stays in the mailbox
+
+
+def test_other_after_modes(env, monkeypatch):
+    msgs = {b"1": mk("Chores", "wash dishes", mid="<a1@x>")}
+    fake, *_ = run_poll(env, monkeypatch, msgs, after="mark_read")
+    assert fake.expunged == [] and fake.copied == [] and b"1" in fake.messages
+    msgs = {b"1": mk("Chores", "wash dishes", mid="<a2@x>")}
+    fake, *_ = run_poll(env, monkeypatch, msgs, after="delete", trash_folder="")                 # non-Gmail: delete for good
+    assert fake.copied == [] and fake.expunged == [b"1"]

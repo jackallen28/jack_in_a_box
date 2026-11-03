@@ -33,7 +33,8 @@ page at the Pi's IP address.
 | `[school]` / `[!]` / `[3d printer]` in the subject or text | that hand-drawn symbol prints above the heading |
 | An email with a photo | **one** printout (all the text in one box) with the photo underneath |
 | Subject line | printed as the bold heading; no subject → no heading |
-| An email **forwarded** to the printer, with your own notes typed above it | `EMAIL` printout: bold subject, a 3-5 sentence summary, and an **ACTIONS** checklist made from your notes |
+| An email **forwarded** to the printer, with your own notes typed above it | `EMAIL` printout: bold subject, a 3-5 sentence summary (**requests and deadlines first**, signature and logos stripped), and an **ACTIONS** checklist from your notes |
+| `[reply by friday]` / `[paper due monday]` / `[full]` in your notes above a forward | those answers pulled out of the email under their own headings / the whole message instead of a summary |
 | A Google Calendar event | `EVENT` printout at 7 am the day before (or 7 am the day of, if it was added after the cutoff) |
 
 ## Install (Raspberry Pi 3B+ or newer, Raspberry Pi OS)
@@ -176,6 +177,68 @@ bookwork home shopping money phone email birthday heart star idea health car pet
 **Add your own** on the Symbols tab: upload a picture (black-on-white works best) **or draw one with the mouse / your finger**, give it a
 name and optional extra tag names, then Save. You can also add extra tag names to any built-in symbol, or switch ones you don't want off.
 
+## Forwarded emails: summary, [focus] and [full]
+
+Forward an email to the box and type your own notes **above** it. The printout is `EMAIL`, your subject in bold, then:
+
+```
+REPLY BY FRIDAY            <- each [focus] you typed, with the sentence(s) from the email that answer it
+Please let me know by Friday so we can close the quarter.
+PAPER DUE MONDAY
+The Year 9 science paper is due Monday 9 November.
+SUMMARY                    <- the rest, requests/deadlines first (never repeats what's above)
+...
+ACTIONS                    <- your own notes, as a tick-box list
+[ ] Ring Dave about the credit
+```
+* **`[reply by friday]`, `[paper due monday]`, `[cost]`, `[bank details]` ...** anything in square brackets that isn't a symbol is a
+  *question*. The box finds the sentences that best match it (words and sense: *reply* also finds "let me know", "get back to", "respond";
+  *cost* finds dollar amounts). It only ever quotes the email, and if it isn't mentioned it prints **"Not mentioned in this email."** so
+  you know it wasn't missed. `[actions]` and `[deadlines]` pull out the two strongest requests / dates.
+* **`[full]`** prints the whole message instead of a summary (capped at 2,500 characters, adjustable).
+* **Symbols still work** in the same notes: `[work] [!] [reply by friday]`.
+* **Signatures never print.** Before anything is summarised or printed, the box removes sign-offs and contact blocks ("Kind regards, Dave /
+  Accounts Manager / T: 02 ..."), "Sent from my iPhone", legal disclaimers, "CAUTION: external email" banners, older replies in the
+  chain ("On Monday ... wrote:", Outlook From/Sent blocks), long links (shown as "(link)") and the `[cid:image001.png]` / `[image: Logo]`
+  placeholders that signature pictures leave behind. Pictures in forwarded emails are never printed. Real text is kept: it only cuts what
+  looks like a signature.
+
+## Local AI summaries (Raspberry Pi 3B+)
+
+Optional, and the built-in summary is already decent. The AI rewrites the *rest-of-the-email* summary only; `[focus]` and `[full]` never use it.
+Expect **roughly 1-3 minutes per forwarded email** on a 3B+. I could not run a real model while building this, so treat that figure
+as an estimate; **Text & sorting -> Test AI summary** tells you the truth on your Pi.
+
+**One-off setup**
+1. **64-bit OS.** Ollama only runs on 64-bit. A 3B+ can, but Raspberry Pi OS is often 32-bit (`uname -m` should say `aarch64`). If not, flash
+   *Raspberry Pi OS Lite (64-bit)* with Raspberry Pi Imager (no desktop = the "super basic" mode), reinstall Jack in a Box, copy your `data/` folder back.
+2. `bash deploy/lean-mode.sh` then reboot: GPU memory to 16 MB, Bluetooth and unused services off, compressed swap (zram). Reversible with `--undo`.
+3. `bash deploy/ai-setup.sh`: installs Ollama, sets it to one model at a time and to free its RAM straight after each use, downloads
+   `qwen2.5:0.5b` (about 400 MB, the biggest that fits 1 GB).
+4. **Text & sorting** -> Summary engine = *Local AI* -> Save -> *Test AI summary*.
+
+**Why it won't make things up:** a 0.5B model will happily invent facts, so it's never trusted. It only sees a short excerpt (the requests and
+deadlines the ranker picked, plus sender and subject), and every number, date, day/month and name in its answer must appear in the email. Otherwise
+its answer is **thrown away and the built-in summary is used**. The same happens if Ollama is off, the model is missing or it times out (4 minutes).
+Only one summary runs at a time. The history/Try-it notes say whether the AI or the built-in summary was used. The "Try it" preview never uses the AI.
+
+Prefer not to run it on the Pi? Set *AI: Ollama address* to another computer on your network (and `OLLAMA_HOST=0.0.0.0` there).
+
+## Power, cooling and the email mailbox
+
+**What it costs to run:** a Pi 3B+ idles around 2-3 W, roughly 20-25 kWh a year, which is about **$6-9 a year** at ~30c/kWh. The printer only
+draws noticeably while printing. Leave it on 24/7; there is nothing to tune for cost.
+* **Fan** (optional): a GPIO pin switches a 5 V fan through a transistor. *Automatic* runs it above 60 C (off below 50 C), and for the whole of every AI
+  summary, then lets it cool. Wiring guide and settings on the **Power & fan** page; GPIO22 by default.
+* **`bash deploy/eco-mode.sh`** (optional, reversible): LEDs, Bluetooth and HDMI off, Wi-Fi power-save. Saves a few hundred milliwatts.
+* **Power off when idle** (optional, **off by default**): a 3B+ has no sleep mode and no clock to wake itself, so this fully switches it off after
+  N idle hours (never while anything is queued or a calendar print is near); wake it by a button on GPIO3 + GND, or re-plug the power. Most
+  people should leave it off.
+* **Email left in the inbox:** after an email is printed (or queued for the button) it is **deleted**: on Gmail it moves to Trash, which empties itself
+  after 30 days, so a mistake is recoverable. Only emails that were actually printed or queued are deleted; blocked/unknown senders, empty emails, a
+  friend's message that was dropped because the queue was full, and anything that errored are kept (marked read). Change this under *Email -> After
+  printing an email* (delete / mark read / move to a folder). If the Pi was off, every unread email is picked up in order when it starts.
+
 ## How the "smart" parts work (no AI needed)
 
 * **Splitting.** Blank lines separate reminders. Inside a line, `and` / commas / `then` split it
@@ -188,11 +251,9 @@ name and optional extra tag names, then Save. You can also add extra tag names t
   doubled words, capitals, spacing and full stops. It is deliberately conservative, and can't know your friends' names - add
   anything it wrongly "fixes" under *Words never to correct*. The Try-it page and history list what it changed.
 * **Sorting.** Urgent first, then soonest deadline, then undated in the order you wrote them (changeable).
-* **Summaries.** Frequency-based extractive summarising: it picks the 3-5 most informative sentences (boosting dates, amounts,
-  requests and deadlines) and prints them in their original order. It quotes rather than paraphrases.
-  *Optional:* turn on a local model through [Ollama](https://ollama.com) (e.g. `qwen2.5:0.5b`) for abstractive
-  summaries. On a Pi 3B+ (1 GB RAM) that is slow (tens of seconds) and modest in quality; it falls back to the built-in
-  summariser on any failure.
+* **Summaries.** Frequency-based extractive summarising: it picks the 3-5 most informative sentences and prints them with
+  **requests and deadlines first** (sentences that ask for something, or contain a date, "by/before/due", or an amount, are
+  always kept and lead). It quotes rather than paraphrases. See *Forwarded emails* and *Local AI* below.
 
 ### Calendar timing
 For an event on day **D** with print time **T** (default 07:00):
@@ -248,5 +309,7 @@ Fonts are open-licence (SIL OFL): Bungee, Bungee Shade, Monoton, Press Start 2P,
 ## Known limits
 * Gmail only exposes mail via IMAP polling here (default every 30 s), not push.
 * Spelling is best-effort; unusual names and slang may be altered or missed. The list of "never correct" words fixes this over time.
-* The summariser can't paraphrase or read attachments (PDF/Word) - only the email text.
+* Summaries, `[focus]` and `[full]` only read the email text, not attachments (PDF/Word) or pictures. The built-in summary quotes, it doesn't reword.
+* `[focus]` matching is word-and-synonym based, so an unusual phrasing can be missed (it then says "Not mentioned"). Tell me which ones and I'll add synonyms.
+* Local AI, the fan, GPIO and the installers were tested against simulated hardware (a fake Ollama server, mock GPIO pins, a local git remote), not a real Pi.
 * HEIC photos need `pip install pillow-heif`.

@@ -25,6 +25,18 @@ import urllib.request
 
 log = logging.getLogger("llm")
 _LOCK = threading.Lock()          # one model run at a time (RAM)
+_busy = 0                         # >0 while a summary is waiting for / running on the model (the fan watches this)
+_busy_lock = threading.Lock()
+
+
+def is_busy() -> bool:
+    return _busy > 0
+
+
+def _busy_add(n: int) -> None:
+    global _busy
+    with _busy_lock:
+        _busy += n
 
 SYSTEM = ("You write the summary of a forwarded email for a small receipt printout. "
           "Use ONLY facts stated in the email text. Put requests, actions and deadlines FIRST. "
@@ -112,6 +124,7 @@ def run(sentences: list[str], n: int, cfg: dict, context: str = "") -> tuple[lis
                     "num_predict": int(cfg.get("num_predict", 160)), "num_thread": 4},
     }
     t0 = time.time()
+    _busy_add(1)
     try:
         with _LOCK:
             data = _post(cfg, "/api/chat", payload, float(cfg.get("timeout", 240)))
@@ -132,6 +145,8 @@ def run(sentences: list[str], n: int, cfg: dict, context: str = "") -> tuple[lis
                 info["used_ai"] = True
                 return sents, info
             info["reason"] = "rejected - mentioned things not in the email: " + ", ".join(bad[:6])
+    finally:
+        _busy_add(-1)
     info["seconds"] = info["seconds"] or round(time.time() - t0, 1)
     log.warning("AI summary not used (%s) - using the built-in summary", info["reason"])
     return None, info
