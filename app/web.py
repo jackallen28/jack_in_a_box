@@ -22,7 +22,7 @@ from . import icons as icon_lib, llm, plugins, schema
 from .config import APP_DIR, DATA_DIR, ROOT, KIND_DEFAULTS, ConfigStore, default_template, merge
 from .mailbox import MailPoller
 from .mailparse import Incoming, _load_image, parse
-from .pipeline import build_cards, local_now, plain_card
+from .pipeline import build_cards, classify_sender, local_now, plain_card
 from .render import FONTS, UPLOAD_DIR, render_card
 from .samples import sample_card, sample_image
 from .service import LOGBUF, Service
@@ -257,6 +257,30 @@ def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button, 
     def release_all():
         """Same as pressing the physical button."""
         return jsonify(released=button.press())
+
+    @app.get("/api/blocked-senders")
+    def blocked_senders():
+        """Who emailed the printer but isn't on the admin list or friends list (so nothing printed)."""
+        rows = svc.db.all("SELECT info AS email, MAX(ts) AS last, COUNT(*) AS n FROM seen "
+                          "WHERE status='blocked' AND info != '' GROUP BY info ORDER BY last DESC LIMIT 12")
+        return jsonify([r for r in rows if classify_sender(r["email"], cfg.data)[0] is None][:8])
+
+    @app.post("/api/allow-sender")
+    def allow_sender():
+        """One-click: add an address to YOUR addresses (admin) or to the friends list."""
+        b = request.json or {}
+        em = str(b.get("email", "")).strip().lower()
+        if len(em) > 200 or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", em):
+            return jsonify(error="That doesn't look like an email address"), 400
+        d = cfg.data
+        if b.get("as") == "friend":
+            if not any(f.get("email") == em for f in d["friends"]):
+                d["friends"].append({"name": str(b.get("name") or em.split("@")[0]).strip()[:60], "email": em,
+                                     "bypass_queue": False, "enabled": True})
+        elif em not in [str(x).strip().lower() for x in d["email"]["allowed_senders"]]:
+            d["email"]["allowed_senders"].append(em)
+        cfg.replace(d)
+        return jsonify(ok=True)
 
     @app.post("/api/discard-held")
     def discard_held():

@@ -135,3 +135,40 @@ def test_update_status_and_update_now(client, tmp_path, monkeypatch):
     monkeypatch.setattr(web.subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, "", "no"))
     r = c.post("/api/update-now", headers=H).json
     assert not r["ok"] and "install.sh" in r["message"] and not (tmp_path / "update-now").exists()
+
+
+# ---------------------------------------------------------------- who is allowed to email the printer
+def test_ignored_senders_can_be_added_with_one_click(client):
+    import sys as _sys
+    from pathlib import Path as _P
+    _sys.path.insert(0, str(_P(__file__).resolve().parent))
+    from test_core import mk
+    c, cfg, svc = client
+    login(c)
+    poller = MailPoller(cfg, svc)
+    poller.handle(mk("Reminder", "wash dishes", sender="Jack <jack@mac.com>", mid="<a@x>"))     # not on any list yet
+    poller.handle(mk("Reminder 2", "walk dog", sender="jack@mac.com", mid="<b@x>"))
+    poller.handle(mk("Hi", "hello", sender="Sarah <sarah@x.com>", mid="<c@x>"))
+    assert svc.db.one("SELECT COUNT(*) n FROM jobs")["n"] == 0                                    # nothing printed
+    rows = c.get("/api/blocked-senders").json
+    assert {r["email"]: r["n"] for r in rows} == {"jack@mac.com": 2, "sarah@x.com": 1}
+
+    assert c.post("/api/allow-sender", json={"email": "Jack@Mac.com", "as": "admin"}, headers=H).json == {"ok": True}
+    assert cfg.data["email"]["allowed_senders"] == ["jack@mac.com"]
+    assert c.post("/api/allow-sender", json={"email": "jack@mac.com", "as": "admin"}, headers=H).status_code == 200
+    assert cfg.data["email"]["allowed_senders"] == ["jack@mac.com"]                               # no duplicate
+    assert c.post("/api/allow-sender", json={"email": "sarah@x.com", "as": "friend", "name": "Sarah"}, headers=H).status_code == 200
+    assert cfg.data["friends"] == [{"name": "Sarah", "email": "sarah@x.com", "bypass_queue": False, "enabled": True}]
+    assert c.get("/api/blocked-senders").json == []                                               # both now allowed -> gone from the list
+
+    poller.handle(mk("Reminder 3", "pay rent", sender="jack@mac.com", mid="<d@x>"))              # and their next email prints
+    assert svc.db.one("SELECT COUNT(*) n FROM jobs")["n"] == 1
+
+
+def test_allow_sender_rejects_rubbish_and_needs_login(client):
+    c, cfg, _ = client
+    assert c.post("/api/allow-sender", json={"email": "a@b.co"}, headers=H).status_code == 401
+    login(c)
+    for bad in ["", "nope", "a@b", "a b@c.com", "x" * 300 + "@c.com"]:
+        assert c.post("/api/allow-sender", json={"email": bad}, headers=H).status_code == 400
+    assert cfg.data["email"]["allowed_senders"] == [] and cfg.data["friends"] == []

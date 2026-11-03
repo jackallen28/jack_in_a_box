@@ -159,7 +159,16 @@ function form(fields, onchange) { return h("div", {}, fields.map(f => makeField(
 
 function simple(section, title) {
   const main = $("#main");
-  const card = h("div", { class: "card" }, h("h2", {}, title), form(SCHEMA.sections[section]));
+  let fields = SCHEMA.sections[section];
+  if (section === "email") {                              // the most important setting gets its own card, first
+    const who = fields.filter(f => f.path === "email.allowed_senders");
+    fields = fields.filter(f => f.path !== "email.allowed_senders");
+    main.append(h("div", { class: "card" }, h("h2", {}, "Who can email the printer?"),
+      h("p", { class: "small" }, h("strong", {}, "Put YOUR email address here"), " (the one you'll send reminders from), one per line. Emails from these addresses print straight away as reminders. ",
+        "Anyone else is ignored. Friends who should get a MESSAGE slip go on the ", h("a", { href: "#", onclick: e => { e.preventDefault(); go("messages"); } }, "Messages tab"), "."),
+      form(who), blockedPanel()));
+  }
+  const card = h("div", { class: "card" }, h("h2", {}, title), form(fields));
   main.append(card);
   if (section === "email") {
     const res = h("div", { class: "small muted" });
@@ -232,12 +241,39 @@ function simple(section, title) {
   }
 }
 
+/* ---------------------------------------------------------------- who may email the printer */
+async function allowSender(email, as) {
+  if (dirty) return toast("Save your changes first, then try again.", true);
+  try {
+    await api("/api/allow-sender", { method: "POST", json: { email, as } });
+    CFG = await api("/api/config"); SAVED = JSON.parse(JSON.stringify(CFG));
+    toast(as === "admin" ? "Added as you. Send your email again." : "Added as a friend (set their name on the Messages tab).");
+    go(TAB);
+  } catch (e) { toast(e.message, true); }
+}
+function blockedPanel() {
+  const box = h("div", { style: "margin-top:12px" });
+  api("/api/blocked-senders").then(rows => {
+    if (!rows.length) return;
+    box.append(h("h3", {}, "Recently ignored senders"),
+      h("p", { class: "small muted" }, "These emailed the printer but aren't on any list, so nothing was printed. If one is you or a friend, add them:"),
+      ...rows.map(r => h("div", { class: "row", style: "margin:6px 0" }, h("code", {}, r.email),
+        h("span", { class: "muted small" }, `${r.n} email${r.n > 1 ? "s" : ""}`),
+        h("button", { class: "btn small primary", onclick: () => allowSender(r.email, "admin") }, "That's me"),
+        h("button", { class: "btn small", onclick: () => allowSender(r.email, "friend") }, "Add as a friend"))));
+  }).catch(() => {});
+  return box;
+}
+
 /* ---------------------------------------------------------------- dashboard */
 function dashboard(main) {
   const stat = h("div", { class: "card" });
   const hist = h("div", { class: "hist" });
   const log = h("div", { class: "log" });
-  main.append(stat, h("div", { class: "card" }, h("div", { class: "row" }, h("h2", { style: "flex:1;margin:0" }, "Recent printouts"),
+  const nobody = CFG.email.enabled && !(CFG.email.allowed_senders || []).length && !(CFG.friends || []).length;
+  if (nobody) main.append(h("div", { class: "banner", style: "margin-bottom:16px" }, "Nobody is allowed to email the printer yet, so every email is ignored.  ",
+    h("button", { class: "btn small primary", onclick: () => go("email") }, "Add your email address")));
+  main.append(stat, h("div", { class: "card", id: "blockedCard" }, blockedPanel()), h("div", { class: "card" }, h("div", { class: "row" }, h("h2", { style: "flex:1;margin:0" }, "Recent printouts"),
     h("button", { class: "btn", onclick: async () => { await api("/api/test-print", { method: "POST", json: { template: "reminder" } }); toast("Test print queued"); refresh(); } }, "Print test"),
     h("button", { class: "btn", onclick: async () => { await api("/api/check-mail", { method: "POST" }); toast("Checking mail…"); } }, "Check mail now")), hist),
     h("div", { class: "card" }, h("h2", {}, "Activity log"), log));

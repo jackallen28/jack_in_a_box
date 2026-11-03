@@ -63,7 +63,7 @@ needed (the repo is public). Leave off `--with-ai --reboot` for a plain install 
 `bash ~/jack_in_a_box/deploy/enable-ai.sh`.
 
 **4. In your browser** (a minute after the reboot): `http://jack-in-a-box.local:8080` -> choose a password -> **Printer** tab (*Check connection*, *Print a test
-reminder*) -> **Email** (Gmail address + app password, your addresses) -> **Calendar** (iCal link) -> **Messages** (friends, button) ->
+reminder*) -> **Email** (first box, *Who can email the printer?*: **your own address**; then the printer's Gmail address + app password) -> **Calendar** (iCal link) -> **Messages** (friends, button) ->
 **Text & sorting** -> *Test AI summary*, and when it works press **Switch on AI mode**.
 
 The AI is installed but **OFF** until you press that button, so the box works with the built-in summary from the first minute.
