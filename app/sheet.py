@@ -190,11 +190,11 @@ class SheetPoller(threading.Thread):
         # --- symbols (columns "Symbol 1/2/3")
         sym_ids: list[str] = []
         for h in cols.get("symbols", []):
-            val = re.sub(r"^\[|\]$", "", (values.get(h) or "").strip()).strip()
+            val = (values.get(h) or "").strip()
             if val:
-                _, ids = icon_lib.extract_tags(f"[{val}]", c)
-                if ids:
-                    sym_ids += ids
+                iid = icon_lib.symbol_from_value(val, c)         # "7", "7 - School", "School"
+                if iid:
+                    sym_ids.append(iid)
                 else:
                     notes.append(f"unknown symbol '{val}'")
 

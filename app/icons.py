@@ -394,3 +394,57 @@ def render_sheet(cfg: dict, width: int = 576) -> Image.Image:
             sheet.paste(c, (margin + i * cell_w, y))
         y += max(c.height for c in r) + 8
     return sheet.point(lambda p: 255 if p >= 160 else 0).convert("1")
+
+
+# --------------------------------------------------------------------------- numbered list + printable/shareable chart
+def numbered(cfg: dict) -> list[dict]:
+    """Every symbol with a stable number: the built-ins are 1-24 (never renumbered), your own follow from 25."""
+    ic = cfg.get("icons", {})
+    out = [{"n": n, "id": iid, "name": name, "enabled": iid not in ic.get("disabled", []), "builtin": True}
+           for n, (iid, (name, _short, _)) in enumerate(BUILTIN.items(), 1)]
+    for n, c in enumerate(ic.get("custom", []), len(BUILTIN) + 1):
+        out.append({"n": n, "id": c["id"], "name": c.get("name") or c["id"], "enabled": True, "builtin": False})
+    return out
+
+
+def symbol_from_value(value: str, cfg: dict) -> str | None:
+    """A symbol picked in a form: "7", "7 - School", "School" or "[school]" -> its id (None if unknown)."""
+    v = re.sub(r"^\[|\]$", "", (value or "").strip()).strip()
+    if not v:
+        return None
+    m = re.match(r"^(\d{1,3})\b", v)                    # "3d printer" has no word boundary after the 3, so it isn't a number
+    if m:
+        item = next((x for x in numbered(cfg) if x["n"] == int(m.group(1)) and x["enabled"]), None)
+        if item:
+            return item["id"]
+    _, ids = extract_tags(f"[{v}]", cfg)
+    return ids[0] if ids else None
+
+
+def render_chart(cfg: dict, cols: int = 6, cell_w: int = 150, icon_px: int = 96) -> Image.Image:
+    """One picture of all symbols with their numbers and names (for the Google Form, a fridge, a README)."""
+    from .render import load_font
+    items = [x for x in numbered(cfg) if x["enabled"]]
+    rows = -(-len(items) // cols)
+    cell_h = icon_px + 58
+    top = 58
+    W, H = cols * cell_w + 20, top + rows * cell_h + 14
+    img = Image.new("L", (W, H), 255)
+    d = ImageDraw.Draw(img)
+    big, _ = load_font("bungee", 30)
+    name_f, _ = load_font("courier-prime", 17, True)
+    num_f, _ = load_font("courier-prime", 18, True)
+    sub_f, _ = load_font("courier-prime", 13)
+    d.text((12, 8), "SYMBOLS", font=big, fill=255, stroke_width=2, stroke_fill=0)
+    d.text((W - 12, 40), "pick one by its number or its name", font=sub_f, fill=90, anchor="rs")
+    for i, it in enumerate(items):
+        x0, y0 = 10 + (i % cols) * cell_w, top + (i // cols) * cell_h
+        d.rectangle([x0, y0, x0 + cell_w - 1, y0 + cell_h - 1], outline=215)
+        pic = icon_image(it["id"], icon_px, cfg)
+        if pic is not None:
+            img.paste(pic, (x0 + (cell_w - icon_px) // 2, y0 + 8))
+        cx, cy = x0 + 20, y0 + 20
+        d.ellipse([cx - 15, cy - 15, cx + 15, cy + 15], fill=0)
+        d.text((cx, cy + 1), str(it["n"]), font=num_f, fill=255, anchor="mm")
+        d.text((x0 + cell_w // 2, y0 + icon_px + 30), it["name"][:16], font=name_f, fill=0, anchor="mm")
+    return img.point(lambda p: 255 if p > 235 else p)

@@ -134,7 +134,17 @@ def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button, 
 
     @app.get("/api/icons")
     def list_icons():
-        return jsonify(icons=icon_lib.catalogue(cfg.data))
+        nums = {x["id"]: x["n"] for x in icon_lib.numbered(cfg.data)}
+        return jsonify(icons=[{**i, "n": nums.get(i["id"])} for i in icon_lib.catalogue(cfg.data)])
+
+    @app.get("/api/symbol-chart.png")
+    def symbol_chart():
+        """All symbols with their numbers and names, as one picture (add it to your Google Form)."""
+        buf = io.BytesIO()
+        icon_lib.render_chart(cfg.data).save(buf, "PNG", optimize=True)
+        buf.seek(0)
+        return send_file(buf, mimetype="image/png", as_attachment=request.args.get("download") == "1",
+                         download_name="jack-in-a-box-symbols.png")
 
     @app.get("/api/icon/<iid>.png")
     def icon_png(iid):

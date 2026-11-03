@@ -359,3 +359,60 @@ def test_served_script_has_your_secret_in_it_and_is_valid_javascript(tmp_path):
     conf["sheet"]["poll_seconds"] = 120
     assert c.put("/api/config", json=conf, headers=H).status_code == 200
     assert cfg.data["sheet"]["token"] and cfg.data["sheet"]["poll_seconds"] == 120               # saving other settings keeps the secret
+
+
+# ----------------------------------------------------------------------------- symbol numbers + the chart picture
+def test_symbols_have_stable_numbers_and_can_be_picked_by_number_or_name():
+    from app import icons
+    from app.config import normalise
+    cfg = normalise({})
+    nums = {x["id"]: x["n"] for x in icons.numbered(cfg)}
+    assert nums["exclamation"] == 1 and nums["school"] == 4 and nums["calendar"] == 7 and nums["tick"] == 24
+    pick = lambda v, c=cfg: icons.symbol_from_value(v, c)
+    assert pick("7") == pick("7 - Calendar") == pick("7. Calendar") == pick("Calendar") == pick("[calendar]") == "calendar"
+    assert pick("3 - Work") == "work" and pick("3") == "work"
+    assert pick("3d printer") == "3dprinter" and pick("3D Printer") == "3dprinter"        # NOT symbol number 3
+    assert pick("99") is None and pick("") is None and pick("nonsense") is None
+    off = normalise({"icons": {"disabled": ["calendar"]}})
+    assert pick("7", off) is None and icons.numbered(off)[6]["n"] == 7                      # numbers never shift when one is switched off
+    own = normalise({"icons": {"custom": [{"id": "bike1", "name": "Bike", "tags": [], "file": "x.png"}]}})
+    assert [x for x in icons.numbered(own) if x["id"] == "bike1"][0]["n"] == 25 and pick("25 - Bike", own) == "bike1"
+
+
+def test_chart_is_a_small_picture_that_follows_your_symbols():
+    import io as _io
+    from app import icons
+    from app.config import normalise
+    cfg = normalise({})
+    buf = _io.BytesIO()
+    icons.render_chart(cfg).save(buf, "PNG", optimize=True)
+    assert 0 < len(buf.getvalue()) < 120_000 and Image.open(_io.BytesIO(buf.getvalue())).size == (920, 688)
+    fewer = icons.render_chart(normalise({"icons": {"disabled": ["calendar", "heart", "star", "pet", "car", "idea"]}}))
+    assert fewer.size[1] < 688                                                              # 18 symbols = 3 rows instead of 4
+    more = icons.render_chart(normalise({"icons": {"custom": [{"id": "b1", "name": "Bike", "tags": [], "file": "x.png"}]}}))
+    assert more.size[1] > 688                                                               # 25th symbol starts a fifth row
+
+
+def test_a_sheet_row_can_pick_symbols_by_number_in_the_dropdown_format(env):
+    cfg, svc, poller, seen = env
+    Fake.rows = [row(s1="7 - Calendar", s2="4", s3="3d printer", heading="Hi", body="buy milk")]
+    poller.poll_once()
+    assert seen[0][0].icons[:3] == ["calendar", "school", "3dprinter"]
+
+
+def test_chart_endpoint(tmp_path):
+    from app.calsync import CalendarSync
+    from app.gpio import ButtonController
+    from app.mailbox import MailPoller
+    from app.web import create_app
+    cfg = ConfigStore(tmp_path / "c.json")
+    svc = Service(cfg, tmp_path)
+    c = create_app(cfg, svc, MailPoller(cfg, svc), CalendarSync(cfg, svc), ButtonController(cfg, svc)).test_client()
+    H = {"X-Requested-With": "fetch"}
+    assert c.get("/api/symbol-chart.png").status_code == 401
+    c.post("/api/setup", json={"password": "hunter22"}, headers=H)
+    r = c.get("/api/symbol-chart.png")
+    assert r.status_code == 200 and r.data[:4] == b"\x89PNG" and "attachment" not in r.headers.get("Content-Disposition", "")
+    assert "attachment" in c.get("/api/symbol-chart.png?download=1").headers["Content-Disposition"]
+    icons_list = c.get("/api/icons").json["icons"]
+    assert sorted(i["n"] for i in icons_list) == list(range(1, 25))

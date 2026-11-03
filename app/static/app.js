@@ -584,6 +584,7 @@ function symbols(main) {
     "Tags I don't know (like [draft]) are left as normal text. Works on friends' messages and calendar event titles too."),
     h("div", { class: "row" },
       h("button", { class: "btn primary", onclick: async () => { await api("/api/icons/print-sheet", { method: "POST" }); toast("Printing the symbol sheet"); } }, "Print the symbol cheat-sheet"),
+      h("a", { class: "btn", href: "/api/symbol-chart.png?download=1", download: "jack-in-a-box-symbols.png" }, "Download symbol chart (PNG)"),
       h("button", { class: "btn", onclick: async () => { if (dirty) return toast("Save first.", true); await api("/api/test-print", { method: "POST", json: { template: "reminder" } }); toast("Test print queued"); } }, "Print a sample with symbols")));
   main.append(h("div", { class: "card" }, h("h3", {}, "Your symbols"), grid));
 
@@ -709,7 +710,7 @@ function formPage(main) {
       `Google Form link: ${s.state || "starting"}${s.last_check ? ", last checked " + s.last_check : ""}${s.error ? " - " + s.error : ""}`));
   }
   refresh(); POLL = setInterval(() => refresh().catch(() => {}), 6000);
-  api("/api/icons").then(r => { symbols.value = r.icons.filter(i => i.enabled).map(i => i.name).join("\n"); });
+  api("/api/icons").then(r => { symbols.value = r.icons.filter(i => i.enabled).sort((a, b) => a.n - b.n).map(i => `${i.n} - ${i.name}`).join("\n"); });
 
   main.append(h("div", { class: "card" }, h("h2", {}, "Print from a Google Form"),
     h("p", { class: "small" }, "Make a Google Form (on your phone or computer) with a heading, body, up to three symbols and an image upload. Every time it's submitted, Google adds a row to a spreadsheet; this box checks the sheet, ",
@@ -726,8 +727,12 @@ function formPage(main) {
     h("p", { class: "small" }, "Then: ", h("strong", {}, "Settings -> Responses -> Collect email addresses: Verified"), " (so the box knows who sent it: your own address, set under ",
       h("a", { href: "#", onclick: e => { e.preventDefault(); go("email"); } }, "Who can email the printer?"), ", prints straight away). Finally ",
       h("strong", {}, "Responses tab -> Link to Sheets"), " to create the spreadsheet."),
-    h("div", { class: "f" }, h("label", { class: "l" }, "Symbol dropdown options (one per line)"), symbols,
+    h("div", { class: "f" }, h("label", { class: "l" }, "Symbol dropdown options (one per line: number - name)"), symbols,
       h("div", { class: "row" }, h("button", { class: "btn small", onclick: () => copyFrom(symbols) }, "Copy list"))),
+    h("div", { class: "f" }, h("label", { class: "l" }, "Symbol picture for the form"),
+      h("div", { class: "help" }, "Add this to the Symbol 1 question (the picture icon on the question) so people can see what each number is. It always matches your current symbols."),
+      h("img", { src: "/api/symbol-chart.png", style: "max-width:100%;border:1px solid var(--line);background:#fff", alt: "Chart of all symbols with numbers and names" }),
+      h("div", { class: "row", style: "margin-top:6px" }, h("a", { class: "btn small", href: "/api/symbol-chart.png?download=1", download: "jack-in-a-box-symbols.png" }, "Download the picture"))),
     h("p", { class: "small muted" }, "Good to know: Google only allows file uploads from people signed in to a Google account, and uploaded pictures are kept in your Google Drive. Only share the form with people you trust.")));
 
   main.append(h("div", { class: "card" }, h("h3", {}, "Step 2: add the script to the spreadsheet"),
