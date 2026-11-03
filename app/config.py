@@ -225,6 +225,7 @@ DEFAULTS: dict = {
         "url": "",                  # the Apps Script "Web app URL"
         "token": "",                # secret code shared with that script
         "poll_seconds": 60,
+        "timezone": "",             # timezone of the "Schedule Send" answers; blank = the one Google reports for the sheet
         "treat_as": "admin",        # admin: every form row is YOU - prints straight away | by_sender: use the verified email
         "unknown_policy": "hold",   # (by_sender only) someone not on your lists: hold (wait for the button) | print | ignore
     },

@@ -442,8 +442,12 @@ def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button, 
             return jsonify(ok=False, message=str(e))
         cols = sheet_mod.detect_columns(data.get("headers", []))
         n = len(data.get("rows", []))
+        tzname = data.get("timezone", "")
+        has_sched = bool(cols["sched_date"] or cols["sched_time"])
+        schedule = [sheet_mod.describe(r.get("values", {}), cols, cfg.data, tzname) for r in data.get("rows", [])[:10]] if has_sched else []
         return jsonify(ok=True, message=f"Connected. {n} row{'s' if n != 1 else ''} waiting in the sheet.",
-                       headers=data.get("headers", []), mapping=cols)
+                       headers=data.get("headers", []), mapping=cols, schedule=schedule, sheet_timezone=tzname,
+                       warning=sheet_mod.OUTDATED if has_sched and not tzname else "")
 
     @app.post("/api/sheet-check")
     def sheet_check():

@@ -706,7 +706,7 @@ function formPage(main) {
 
   async function refresh() {
     const st = await api("/api/status"), s = st.sheet || {};
-    status.replaceChildren(h("div", {}, !CFG.sheet.enabled ? "Not switched on yet (Step 3)." :
+    status.replaceChildren(s.warning ? h("div", { style: "color:var(--bad);margin-bottom:4px" }, "⚠ " + s.warning) : "", h("div", {}, !CFG.sheet.enabled ? "Not switched on yet (Step 3)." :
       `Google Form link: ${s.state || "starting"}${s.last_check ? ", last checked " + s.last_check : ""}${s.error ? " - " + s.error : ""}${s.scheduled ? `. ${s.scheduled} scheduled, next prints ${s.next_scheduled}` : ""}`));
   }
   refresh(); POLL = setInterval(() => refresh().catch(() => {}), 6000);
@@ -762,6 +762,8 @@ function formPage(main) {
         if (r.ok) {
           const m = r.mapping, sy = (m.symbols || []).join(", ") || "none";
           mapping.textContent = `Recognised columns - type: ${m.type || "none (all rows = Reminder)"}; heading: ${m.heading || "none"}; body: ${m.body || "none"}; symbols: ${sy}; image: ${m.image || "none"}; schedule: ${m.sched_date || m.sched_time ? [m.sched_date, m.sched_time].filter(Boolean).join(" + ") : "none (everything prints straight away)"}; sender email: ${m.email || "none (uses the 'someone not on your lists' setting)"}.`;
+          if (r.warning) mapping.textContent += "  ⚠ " + r.warning;
+          if ((r.schedule || []).length) mapping.textContent += `  Waiting rows - ${r.schedule.map((x, i) => `#${i + 1}: ${x}`).join("; ")}. (Sheet timezone: ${r.sheet_timezone || "not reported - old script"}.)`;
         } else mapping.textContent = "";
       } }, "Test connection"),
       h("button", { class: "btn", onclick: async () => { await api("/api/sheet-check", { method: "POST" }); toast("Checking the sheet now…"); setTimeout(refresh, 3000); } }, "Check the sheet now")),

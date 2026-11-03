@@ -39,6 +39,10 @@ class SheetError(Exception):
     pass
 
 
+OUTDATED = ("The script in your Google Sheet is out of date, so Schedule Send may print too early. Press 'Show my script', paste it over the old one "
+            "in Apps Script, Save, then Deploy -> Manage deployments -> pencil -> Version: New version -> Deploy.")
+
+
 def valid_url(url: str) -> bool:
     """Only Google Apps Script web apps: this app never fetches arbitrary addresses on your behalf."""
     u = urllib.parse.urlparse(url or "")
@@ -153,6 +157,29 @@ def parse_date(text: str, order: str, ref: datetime) -> date | None:
     return dl.when.date() if dl else None
 
 
+def from_utc(text: str, tz) -> str:
+    """The first version of the script sent every date as UTC ("2026-11-04T13:00:00.000Z" = midnight on 5 Nov in Sydney).
+    Turn those into the sheet's own local time so they still read correctly."""
+    t = (text or "").strip()
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?Z", t):
+        return t
+    try:
+        return datetime.fromisoformat(t[:-1] + "+00:00").astimezone(tz).strftime("%Y-%m-%dT%H:%M:%S")
+    except ValueError:
+        return t
+
+
+def describe(values: dict, cols: dict, cfg: dict, tzname: str = "") -> str:
+    """How a row's schedule was read - shown on the Google Form page so a wrong reading is easy to spot."""
+    due, note = schedule_due(values, cols, cfg, tzname)
+    if note:
+        return note
+    if due is None:
+        return "prints straight away"
+    when = due.strftime("%a %d %b %H:%M")
+    return f"prints {when}" if due > datetime.now(due.tzinfo) else f"{when} has passed - prints straight away"
+
+
 def sheet_zone(name: str, cfg: dict):
     """The timezone the sheet's times are written in (Google tells us; else your own setting)."""
     try:
@@ -174,10 +201,11 @@ def schedule_due(values: dict, cols: dict, cfg: dict, tzname: str = "") -> tuple
     sd, st = g("sched_date"), g("sched_time")
     if not sd and not st:
         return None, ""
-    tz = sheet_zone(tzname, cfg)
+    tz = sheet_zone(cfg["sheet"].get("timezone") or tzname, cfg)
     order = cfg["general"].get("date_order", "dmy")
     ref = datetime.now(tz)
-    stamp = g("stamp").replace(" ", "T", 1)
+    sd, st = from_utc(sd, tz), from_utc(st, tz)
+    stamp = from_utc(g("stamp"), tz).replace(" ", "T", 1)
     try:
         sent = datetime.fromisoformat(stamp[:19]).replace(tzinfo=tz) if stamp else ref
     except ValueError:
@@ -249,6 +277,8 @@ class SheetPoller(threading.Thread):
         waiting = 0
         scheduled: list[datetime] = []
         tzname = data.get("timezone", "")
+        outdated = bool((cols["sched_date"] or cols["sched_time"]) and not tzname)
+        self.status["warning"] = OUTDATED if outdated else ""
         for row in data.get("rows", []):
             rid = row["id"]
             if self.svc.db.one("SELECT 1 FROM sheet_rows WHERE id=?", (rid,)):
@@ -256,6 +286,8 @@ class SheetPoller(threading.Thread):
                 continue
             try:
                 due, snote = schedule_due(row.get("values", {}), cols, c, tzname)
+                if cols["sched_date"] or cols["sched_time"]:
+                    log.info("Form row schedule: %s", describe(row.get("values", {}), cols, c, tzname))
                 if due is not None and due > datetime.now(due.tzinfo):
                     scheduled.append(due)                    # not yet: stays in the sheet and is looked at again every poll
                     continue

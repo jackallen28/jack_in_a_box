@@ -237,6 +237,7 @@ SECTIONS = {
         F("sheet.enabled", "Print new rows from the Google Sheet", "bool"),
         F("sheet.url", "Web app URL (from the Apps Script deployment)", help="Starts with https://script.google.com/macros/s/ and ends with /exec"),
         F("sheet.poll_seconds", "Check the sheet every (seconds)", "number", min=15, max=3600),
+        F("sheet.timezone", "Timezone of the Schedule Send answers", help="Blank = the timezone Google reports for the spreadsheet (File -> Settings in the sheet). Set e.g. Australia/Sydney if scheduled times come out wrong."),
         F("sheet.treat_as", "Who are form submissions treated as?", "select", options=opts(
             ("admin", "Me (admin): print straight away, never wait for the button"),
             ("by_sender", "Decide by the sender's verified email (friends wait for the button)")),

@@ -587,3 +587,44 @@ def test_schedule_columns_are_recognised_and_not_mistaken_for_the_body():
     assert cols["body"] == "Body" and cols["stamp"] == "Timestamp"
     only = detect_columns(["Timestamp", "Heading", "Note", "Send time"])
     assert only["sched_time"] == "Send time" and only["sched_date"] is None and only["body"] == "Note"
+
+
+# ----------------------------------------------------------------------------- an out-of-date script (sends UTC) must not cause instant prints
+OLD = {"Timestamp": "2026-11-02T23:00:00.000Z",                  # sent Tue 3 Nov 10:00 Sydney, written in UTC by the first script
+       "Schedule Send (DATE)": "2026-11-04T13:00:00.000Z",       # = Thu 5 Nov 00:00 Sydney
+       "Schedule Send (TIME)": "1899-12-30T07:30:00.000Z"}       # = 5:30 PM Sydney
+
+
+def test_values_from_the_first_version_of_the_script_are_converted_from_utc(sched):
+    cfg, svc, poller, seen = sched
+    due, _ = sheet_mod.schedule_due(OLD, sheet_mod.detect_columns(SCHED_HEADERS), cfg.data, "")
+    assert due.isoformat() == "2026-11-05T17:30:00+11:00"
+    due, _ = sheet_mod.schedule_due({**OLD, "Schedule Send (DATE)": ""}, sheet_mod.detect_columns(SCHED_HEADERS), cfg.data, "")
+    assert due.isoformat() == "2026-11-03T17:30:00+11:00"          # time only: today (Sydney), not yesterday (UTC)
+
+
+def test_an_old_script_still_schedules_and_the_page_warns_about_it(sched):
+    cfg, svc, poller, seen = sched
+    Fake.rows = [[*row(ts="2026-11-02T23:00:00.000Z", body="Thursday job"), "2026-11-04T13:00:00.000Z", "1899-12-30T07:30:00.000Z"]]
+    assert poller.poll_once() == 0 and jobs(svc) == [] and poller.status["next_scheduled"] == "Thu 05 Nov 17:30"
+    assert "out of date" in poller.status["warning"]                  # Fake reports no timezone, like the old script
+
+
+def test_the_timezone_setting_overrides_what_google_reports(sched):
+    cfg, svc, poller, seen = sched
+    d = cfg.data
+    d["sheet"]["timezone"] = "America/New_York"
+    cfg.replace(d)
+    due, _ = sheet_mod.schedule_due({"Timestamp": "2026-11-03T10:00:00", "Schedule Send (DATE)": "2026-11-05T00:00:00", "Schedule Send (TIME)": "9:00 AM"},
+                                    sheet_mod.detect_columns(SCHED_HEADERS), cfg.data, "Australia/Sydney")
+    assert due.isoformat() == "2026-11-05T09:00:00-05:00"
+
+
+def test_describe_says_how_a_row_was_read(sched):
+    cfg, svc, poller, seen = sched
+    cols = sheet_mod.detect_columns(SCHED_HEADERS)
+    assert sheet_mod.describe({}, cols, cfg.data) == "prints straight away"
+    assert sheet_mod.describe({"Timestamp": "2026-11-03T10:00:00", "Schedule Send (DATE)": "2026-11-05T00:00:00", "Schedule Send (TIME)": "5:30:00 PM"},
+                              cols, cfg.data, "Australia/Sydney") == "prints Thu 05 Nov 17:30"
+    assert "has passed" in sheet_mod.describe({"Timestamp": "2026-11-03T10:00:00", "Schedule Send (DATE)": "2026-11-01T00:00:00", "Schedule Send (TIME)": "9:00 AM"},
+                                              cols, cfg.data, "Australia/Sydney")

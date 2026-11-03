@@ -207,7 +207,8 @@ How a row prints:
   already passed, or is right now, prints straight away). **Time only** = that time on the day the form was sent. **Date only** = that morning at the calendar print time
   (7:00 by default); today's date alone prints now. The row stays safely in the Google Sheet until it has printed, so a power cut or reboot loses nothing, and the
   Pi wakes itself at the due time (within about 10 seconds). Times are read in the spreadsheet's own timezone, so set that to yours (Sheet -> File -> Settings).
-  The Google Form tab shows how many are waiting and when the next one prints. Scheduled printouts say "scheduled for ..." in the history notes.
+  The Google Form tab shows how many are waiting and when the next one prints; **Test connection** also lists how each waiting row's schedule was read
+  ("prints Thu 05 Nov 17:30") and warns if the script in your sheet is out of date. If times come out wrong, set *Timezone of the Schedule Send answers*. Scheduled printouts say "scheduled for ..." in the history notes.
   **Updating an existing setup needs the new script:** open the tab, *Show my script*, paste it over the old one in Apps Script, Save, then
   *Deploy -> Manage deployments -> pencil -> Version: New version -> Deploy*. The Web app URL and secret code don't change.
 * A bad or empty row never blocks the ones behind it; a row that couldn't print is left in the sheet for you to see.
