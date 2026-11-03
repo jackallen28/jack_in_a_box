@@ -689,3 +689,108 @@ def test_describe_says_how_a_row_was_read(sched):
                               cols, cfg.data, "Australia/Sydney") == "prints Thu 05 Nov 17:30"
     assert "has passed" in sheet_mod.describe({"Timestamp": "2026-11-03T10:00:00", "Schedule Send (DATE)": "2026-11-01T00:00:00", "Schedule Send (TIME)": "9:00 AM"},
                                               cols, cfg.data, "Australia/Sydney")
+
+
+# ----------------------------------------------------------------------------- optional "From name" + the message timestamp
+FROM_HEADERS = [*SCHED_HEADERS, "From name"]
+
+
+def frow(from_name="", date="", time="", **kw):
+    return [*srow(date, time, **kw), from_name]
+
+
+@pytest.fixture()
+def named(sched):
+    cfg, svc, poller, seen = sched
+    Fake.headers_row = list(FROM_HEADERS)
+    return cfg, svc, poller, seen
+
+
+@pytest.mark.parametrize("header", ["From name", "From", "Your name", "Name", "Sender name", "From (name)"])
+def test_from_name_column_is_recognised(header):
+    cols = detect_columns(["Timestamp", "Email Address", header, "Heading", "Body"])
+    assert cols["from_name"] == header and cols["email"] == "Email Address" and cols["body"] == "Body"
+
+
+def test_from_name_does_not_steal_other_columns_and_is_optional():
+    assert detect_columns(HEADERS)["from_name"] is None
+    cols = detect_columns(["Timestamp", "From email address", "Body", "Message or reminder?"])
+    assert cols["email"] == "From email address" and cols["from_name"] is None and cols["type"] == "Message or reminder?"
+
+
+def test_a_message_prints_who_it_is_from_and_when_it_was_sent(named):
+    cfg, svc, poller, seen = named
+    Fake.rows = [frow("Jack", kind="Message", heading="Dinner", body="Back by six", ts="2026-11-03 10:00:00")]
+    assert poller.poll_once() == 1
+    card = seen[0][0]
+    assert card.kind == "message" and card.vars["name"] == "Jack" and card.stamp == "Sent Tue 3 Nov, 10:00 AM"
+
+
+def test_a_scheduled_message_prints_its_schedule_send_time(named):
+    cfg, svc, poller, seen = named
+    Fake.rows = [frow("Jack", "2026-11-05T00:00:00", "5:30:00 PM", kind="Message", body="Happy birthday!", ts="2026-11-03 10:00:00")]
+    poller.poll_once()
+    assert seen[0][0].stamp == "Sent Thu 5 Nov, 5:30 PM"                           # not the day it was typed in
+
+
+def test_a_schedule_time_that_has_already_passed_does_not_backdate_the_message(named):
+    cfg, svc, poller, seen = named
+    Fake.rows = [frow("", "2026-11-01T00:00:00", "9:00 AM", kind="Message", body="late one", ts="2026-11-03 10:00:00")]
+    poller.poll_once()
+    assert seen[0][0].stamp == "Sent Tue 3 Nov, 10:00 AM"
+
+
+def test_the_message_time_follows_the_24_hour_setting(named):
+    cfg, svc, poller, seen = named
+    d = cfg.data
+    d["general"]["time_format"] = "24h"
+    cfg.replace(d)
+    Fake.rows = [frow("Jack", kind="Message", body="Evening", ts="2026-11-03 17:45:00")]
+    poller.poll_once()
+    assert seen[0][0].stamp == "Sent Tue 3 Nov, 17:45"
+
+
+def test_without_a_from_name_the_usual_name_is_used_and_a_friends_config_is_not_changed(named):
+    cfg, svc, poller, seen = named
+    by_sender(cfg)
+    Fake.rows = [frow("", kind="Message", email="sarah@x.com", body="hi"), frow("Sazza", kind="Message", email="sarah@x.com", body="again")]
+    poller.poll_once()
+    assert [c.vars["name"] for c, _ in seen] == ["Sarah", "Sazza"]
+    assert cfg.data["friends"][0]["name"] == "Sarah"                                # the "From name" only applies to that one message
+
+
+def test_a_reminder_with_a_from_name_says_so_and_without_one_has_no_extra_line(named):
+    cfg, svc, poller, seen = named
+    Fake.rows = [frow("Jack", heading="Bins", body="put the bins out"), frow("", heading="Milk", body="buy milk")]
+    poller.poll_once()
+    assert [c.stamp for c, _ in seen] == ["From Jack", ""]
+
+
+def test_the_stamp_is_drawn_on_the_printout_even_with_the_footer_off(named):
+    from app.render import render_card
+    from app.models import Card, Section
+    cfg, svc, poller, seen = named
+    t = cfg.data["templates"]["message"]
+    assert t["footer"]["enabled"] is False
+    base = Card(kind="message", heading="Dinner", sections=[Section("text", text="Back by six")], template="message", vars={"name": "Jack"})
+    stamped = Card(kind="message", heading="Dinner", sections=[Section("text", text="Back by six")], template="message", vars={"name": "Jack"},
+                   stamp="Sent Tue 3 Nov, 10:00 AM")
+    a = render_card(base, t, cfg.data["printer"], cfg.data["icons"])
+    b = render_card(stamped, t, cfg.data["printer"], cfg.data["icons"])
+    assert sum(1 for p in b.getdata() if p == 0) > sum(1 for p in a.getdata() if p == 0)               # extra ink = the line was drawn
+    t2 = {**t, "order": ["title", "heading", "body"]}                                                 # a template without a footer block still gets it
+    c = render_card(stamped, t2, cfg.data["printer"], cfg.data["icons"])
+    assert sum(1 for p in c.getdata() if p == 0) > sum(1 for p in render_card(base, t2, cfg.data["printer"], cfg.data["icons"]).getdata() if p == 0)
+
+
+def test_friends_emails_also_show_when_they_were_sent(tmp_path):
+    from test_core import mk
+    from app.config import normalise
+    from app.mailparse import parse
+    from app.pipeline import message_card
+    cfg = normalise({"general": {"timezone": "Australia/Sydney"}})
+    inc = parse(mk("Dinner", "Back by six", sender="Sarah <sarah@x.com>"))                              # Date: Tue, 3 Nov 2026 10:00:00 +1100
+    card = message_card(inc, {"name": "Sarah", "email": "sarah@x.com"}, cfg)
+    assert card.stamp == "Sent Tue 3 Nov, 10:00 AM"
+    card = message_card(inc, {"name": "Sarah", "email": "sarah@x.com"}, normalise({"general": {"timezone": "America/New_York"}}))
+    assert card.stamp == "Sent Mon 2 Nov, 6:00 PM"                                                      # shown in YOUR timezone

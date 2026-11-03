@@ -192,7 +192,7 @@ checks it every minute, **prints each new row once, then deletes the row after i
 in the sheet until it prints). Set it up on the **Google Form** tab, which has every step and a copy button for each piece. In short:
 
 1. **Make the form** with these question titles: `Message or reminder?` (dropdown *Reminder* / *Message*), `Symbol 1`, `Symbol 2`, `Symbol 3` (dropdowns; the tab gives
-   you the list of symbol names to paste), `Heading` (short answer), `Body` (paragraph), `Image` (file upload), and optionally `Schedule Send (DATE)` (a *Date* question) and `Schedule Send (TIME)` (a *Time* question). Link the form to a Sheet (collecting verified email addresses is optional).
+   you the list of symbol names to paste), `Heading` (short answer), `Body` (paragraph), `Image` (file upload), and optionally `From name` (short answer), `Schedule Send (DATE)` (a *Date* question) and `Schedule Send (TIME)` (a *Time* question). Link the form to a Sheet (collecting verified email addresses is optional).
 2. **Paste the script** the tab generates into the sheet (Extensions -> Apps Script), then Deploy -> Web app -> *Execute as: Me, Who has access: Anyone*.
 3. **Paste the Web app URL** into the tab, switch it on, press *Test connection*.
 
@@ -203,6 +203,12 @@ How a row prints:
   If you share the form and want other people's entries handled like friends' emails instead, change *Who are form submissions treated as?* to
   *Decide by the sender's verified email* (and turn on *Collect email addresses: Verified* in the form): your own address prints straight away, a friend always gets a MESSAGE
   and waits for the button unless you ticked *Skip the queue*, and anyone else follows the *not on your lists* setting (hold / print / ignore).
+* **From name** (optional). Who the message is from. On a **Message** it replaces the usual name in the title ("from Jack"); on a **Reminder** it adds a small
+  "From Jack" line at the bottom. Leave it blank and nothing changes: the sender's usual name is used (your friend's name in *decide by sender* mode). Any header with
+  "from", "sender" or just "name" in it is recognised. No new script is needed to use it.
+* **Messages show when they were sent.** Every MESSAGE slip (from the form, or a friend's email) has a line at the bottom such as `Sent Tue 3 Nov, 10:15 AM` (your
+  timezone, your 12/24-hour setting), printed even if the template's footer is off. For a form message with *Schedule Send* it is the schedule time
+  (`Sent Thu 5 Nov, 5:30 PM`), unless that time had already passed, in which case it is when the form was sent. Friends' emails use the email's own date.
 * **Schedule Send.** Fill in the two optional questions to print later. Both blank = print straight away. **Date + time** = print at that moment (a moment that has
   already passed, or is right now, prints straight away). **Time only** = that time on the day the form was sent. **Date only** = that morning at the calendar print time
   (7:00 by default); today's date alone prints now.

@@ -78,7 +78,7 @@ def call(cfg: dict, action: str, timeout: float = 40, **params) -> dict:
 def detect_columns(headers: list[str]) -> dict:
     """Work out which column is which from the question titles you gave the form."""
     cols: dict = {"type": None, "heading": None, "body": None, "image": None, "email": None, "symbols": [],
-                  "sched_date": None, "sched_time": None, "stamp": None}
+                  "sched_date": None, "sched_time": None, "stamp": None, "from_name": None}
     used: set = set()
     norm = {h: re.sub(r"[^a-z0-9]+", " ", h.lower()).strip() for h in headers}
 
@@ -98,6 +98,7 @@ def detect_columns(headers: list[str]) -> dict:
     take("sched_date", lambda n: re.search(r"\b(schedul\w*|send|print)\b", n) is not None and re.search(r"\bdate\b|\bday\b", n) is not None)
     take("sched_time", lambda n: re.search(r"\b(schedul\w*|send|print)\b", n) is not None and re.search(r"\btime\b", n) is not None)
     take("email", lambda n: "email" in n)
+    take("from_name", lambda n: re.search(r"\bfrom\b|\bsender\b", n) is not None or n in ("name", "your name", "my name"))     # optional: "From name"
     take("symbols", lambda n: re.search(r"\b(symbol|icon)\b", n) is not None, many=True)
     take("image", lambda n: re.search(r"image|photo|picture|upload|\bfile\b", n) is not None)
     take("heading", lambda n: re.search(r"heading|title|subject", n) is not None)
@@ -180,6 +181,18 @@ def describe(values: dict, cols: dict, cfg: dict, tzname: str = "") -> str:
     return f"prints {when}" if due > datetime.now(due.tzinfo) else f"{when} has passed - prints straight away"
 
 
+def row_sent_time(values: dict, cols: dict, cfg: dict, tzname: str = "") -> datetime | None:
+    """When the form row was submitted (the sheet's Timestamp column), as an aware time; None if it can't be read."""
+    raw = (values.get(cols["stamp"]) or "").strip() if cols.get("stamp") else ""
+    if not raw:
+        return None
+    tz = sheet_zone(cfg["sheet"].get("timezone") or tzname, cfg)
+    try:
+        return datetime.fromisoformat(from_utc(raw, tz).replace(" ", "T", 1)[:19]).replace(tzinfo=tz)
+    except ValueError:
+        return None
+
+
 def sheet_zone(name: str, cfg: dict):
     """The timezone the sheet's times are written in (Google tells us; else your own setting)."""
     try:
@@ -230,6 +243,7 @@ class SheetPoller(threading.Thread):
         super().__init__(name="sheet", daemon=True)
         self.cfg, self.svc = cfg, svc
         self.kick = threading.Event()
+        self._tzname = ""                                         # the timezone Google reports for the sheet (set each poll)
         self.status = {"state": "disabled", "last_check": "", "error": "", "processed": 0, "waiting": 0,
                        "scheduled": 0, "next_scheduled": ""}
         self._last_poll = 0.0
@@ -273,7 +287,7 @@ class SheetPoller(threading.Thread):
         cols = detect_columns(data.get("headers", []))
         done = 0
         waiting = 0
-        tzname = data.get("timezone", "")
+        tzname = self._tzname = data.get("timezone", "")
         outdated = bool((cols["sched_date"] or cols["sched_time"]) and not tzname)
         self.status["warning"] = OUTDATED if outdated else ""
         for row in data.get("rows", []):
@@ -333,7 +347,10 @@ class SheetPoller(threading.Thread):
                     self._record(rid, "ignored", [], f"not on your lists ({email or 'no email'})")
                     return
                 hold = policy == "hold"
-        name = (friend or {}).get("name") or (email.split("@")[0] if email else "Form")
+        from_name = re.sub(r"\s+", " ", g("from_name"))[:60]              # optional "From name" column
+        name = from_name or (friend or {}).get("name") or (email.split("@")[0] if email else "Form")
+        sent = row_sent_time(values, cols, c, self._tzname)
+        when = due if due is not None and (sent is None or due > sent) else sent        # a message's printed time: its schedule-send time, else when it was sent
 
         # --- symbols (columns "Symbol 1/2/3")
         sym_ids: list[str] = []
@@ -363,13 +380,15 @@ class SheetPoller(threading.Thread):
 
         inc = Incoming(subject=g("heading"), body=g("body"), sender_addr=email or "form", sender_name=name, images=images)
         if kind == "message":
-            card = message_card(inc, friend or {"name": name, "email": email}, c)
+            card = message_card(inc, {**(friend or {"email": email}), "name": name}, c, when=when)
             cards, copies = ([card] if card else []), 1
         else:
             cards, copies = build_cards(inc, c)
         job_ids: list[int] = []
         for card in cards:
             card.source = "form"
+            if from_name and kind != "message":
+                card.stamp = f"From {from_name}"
             card.icons = _dedupe(sym_ids + card.icons)
             card.notes = [*card.notes, *notes]
             job_ids += self.svc.submit(card, copies, hold=hold, due=due)

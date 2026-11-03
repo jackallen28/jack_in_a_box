@@ -268,13 +268,22 @@ def plain_card(inc: Incoming, cfg: dict, now: datetime, *, kind: str = "reminder
                 vars={"name": name, "date": now.strftime("%a %d %b")})
 
 
-def message_card(inc: Incoming, friend: dict, cfg: dict, now: datetime | None = None) -> Card | None:
+def sent_text(when: datetime, cfg: dict) -> str:
+    """"Sent Tue 3 Nov, 10:15 AM" - in your timezone and your 12/24-hour setting."""
+    from .dates import fmt_time
+    when = when.astimezone(local_tz(cfg)) if when.tzinfo else when
+    return f"Sent {when:%a} {when.day} {when:%b}, {fmt_time(when.time(), cfg['general'].get('time_format', '12h'))}"
+
+
+def message_card(inc: Incoming, friend: dict, cfg: dict, now: datetime | None = None, when: datetime | None = None) -> Card | None:
+    """A MESSAGE slip.  Its send time is printed on it: ``when`` (e.g. a form's schedule-send time), else the email's own date, else now."""
     m = cfg["messages"]
     tpl = m.get("template") or "message"
     card = plain_card(inc, cfg, now or local_now(cfg), kind="message",
                       template=tpl if tpl in cfg["templates"] else "message",
                       name=friend.get("name") or friend.get("email", ""), tidy=m.get("tidy_text", False))
     if card is not None:
+        card.stamp = sent_text(when or inc.date or now or local_now(cfg), cfg)
         res = rules.evaluate(cfg.get("rules", []), {"sender": f"{friend.get('name')} <{friend.get('email')}>",
                                                     "subject": inc.subject, "body": inc.body,
                                                     "has_image": bool(inc.images), "is_forward": False})

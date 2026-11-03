@@ -347,13 +347,14 @@ def block_images(card: Card, tpl: dict, w: int) -> Image.Image | None:
 
 def block_footer(card: Card, tpl: dict, w: int) -> Image.Image | None:
     c = tpl["footer"]
-    if not c.get("enabled"):
-        return None
     lines = []
-    if c.get("text"):
-        lines.append(fill_vars(c["text"], card))
-    if c.get("show_timestamp"):
-        lines.append((card.created or datetime.now()).strftime("%a %d %b %Y  %I:%M %p").replace(" 0", " "))
+    if c.get("enabled"):
+        if c.get("text"):
+            lines.append(fill_vars(c["text"], card))
+        if c.get("show_timestamp") and not card.stamp:
+            lines.append((card.created or datetime.now()).strftime("%a %d %b %Y  %I:%M %p").replace(" 0", " "))
+    if card.stamp:                                    # a message's send time / "From name": printed even if the footer is switched off
+        lines.append(card.stamp)
     if not lines:
         return None
     return text_block("\n".join(lines), "courier-prime", pt(c.get("size_pt", 8)), w, align=c.get("align", "center"))
@@ -419,6 +420,8 @@ def render_card(card: Card, tpl: dict, printer_cfg: dict | None = None, icons_cf
     order = list(tpl.get("order", []))
     if card.icons and "icons" not in order:   # templates saved before symbols existed
         order.insert(order.index("title") + 1 if "title" in order else 0, "icons")
+    if card.stamp and "footer" not in order:
+        order.append("footer")
     rendered = []
     for name in order:
         fn = BLOCKS.get(name)

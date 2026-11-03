@@ -739,6 +739,7 @@ function formPage(main) {
       h("li", {}, h("strong", {}, "Heading"), " - Short answer."),
       h("li", {}, h("strong", {}, "Body"), " - Paragraph."),
       h("li", {}, h("strong", {}, "Image"), " - File upload (images only, up to 3 files, 10 MB)."),
+      h("li", {}, h("strong", {}, "From name"), " - Short answer (optional). Who the message is from: it appears in the MESSAGE title (“from Jack”), and on a reminder as a “From Jack” line. Leave it blank to use the sender's usual name."),
       h("li", {}, h("strong", {}, "Schedule Send (DATE)"), " - ", h("strong", {}, "Date"), " question (optional) and ", h("strong", {}, "Schedule Send (TIME)"), " - ", h("strong", {}, "Time"), " question (optional). ",
         "Both blank (or a moment that has already passed) = prints straight away. Date + time = prints at that moment. Time only = that time on the day you sent the form. ",
         "Date only = that morning at the calendar print time (7:00 by default); today's date alone prints now. The row waits safely in the sheet until it prints.")),
@@ -776,7 +777,7 @@ function formPage(main) {
         const r = await api("/api/sheet-test", { method: "POST" }); result.textContent = r.message; result.style.color = r.ok ? "var(--ok)" : "var(--bad)";
         if (r.ok) {
           const m = r.mapping, sy = (m.symbols || []).join(", ") || "none";
-          mapping.textContent = `Recognised columns - type: ${m.type || "none (all rows = Reminder)"}; heading: ${m.heading || "none"}; body: ${m.body || "none"}; symbols: ${sy}; image: ${m.image || "none"}; schedule: ${m.sched_date || m.sched_time ? [m.sched_date, m.sched_time].filter(Boolean).join(" + ") : "none (everything prints straight away)"}; sender email: ${m.email || "none (uses the 'someone not on your lists' setting)"}.`;
+          mapping.textContent = `Recognised columns - type: ${m.type || "none (all rows = Reminder)"}; heading: ${m.heading || "none"}; body: ${m.body || "none"}; symbols: ${sy}; image: ${m.image || "none"}; from name: ${m.from_name || "none (optional)"}; schedule: ${m.sched_date || m.sched_time ? [m.sched_date, m.sched_time].filter(Boolean).join(" + ") : "none (everything prints straight away)"}; sender email: ${m.email || "none (uses the 'someone not on your lists' setting)"}.`;
           if (r.warning) mapping.textContent += "  ⚠ " + r.warning;
           if ((r.schedule || []).length) mapping.textContent += `  Waiting rows - ${r.schedule.map((x, i) => `#${i + 1}: ${x}`).join("; ")}. (Sheet timezone: ${r.sheet_timezone || "not reported - old script"}.)`;
         } else mapping.textContent = "";
