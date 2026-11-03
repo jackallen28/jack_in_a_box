@@ -14,6 +14,7 @@ The built-in (no AI) summary is scored the same way with --builtin, so you can s
   python -m app.evaluate --url http://192.168.1.20:11434 --model qwen2.5:3b     # e.g. a bigger model on your Mac
   python -m app.evaluate --builtin             # no AI
   python -m app.evaluate --cases 3 --show      # only the first 3, print the bullets
+  python -m app.evaluate --mine                # score the AI on YOUR corrections (AI review tab), each hidden from the model while tested
 Each run on a Pi 3B+ takes about a minute per email.
 """
 from __future__ import annotations
@@ -59,6 +60,50 @@ def evaluate(cfg: dict, use_ai: bool = True, cases: int | None = None) -> list[d
     return out
 
 
+def evaluate_mine(cfg: dict, db, cases: int | None = None, tmp_dir: Path | None = None) -> list[dict]:
+    """Score the AI against YOUR corrections (AI review tab).  Each corrected summary is hidden from the model while it
+    is tested (leave-one-out), so the score says how well it handles an email like those, not whether it can copy."""
+    import json
+    import tempfile
+    from .aifeedback import to_lines, training_rows
+    from .summarise import similar
+    work = copy.deepcopy(cfg)
+    work["summary"]["backend"] = "ollama"
+    mine = training_rows(db, limit=200)
+    fixed = db.all("SELECT * FROM ai_runs WHERE status='fix' AND corrected IS NOT NULL ORDER BY id DESC LIMIT ?", (cases or 20,))
+    out, saved = [], llm.USER_EXAMPLES_FILE
+    tmp = Path(tmp_dir or tempfile.mkdtemp()) / "loo.json"
+    try:
+        for r in fixed:
+            tmp.write_text(json.dumps({"mine": [e for e in mine if e["id"] != r["id"]]}), "utf-8")
+            llm.USER_EXAMPLES_FILE = tmp
+            thread = json.loads(r["thread"] or "[]")
+            ctx = f"From: {r['sender']}\nSubject: {r['subject']}"
+            bullets, _n, info = summarise_thread(thread, ctx, work, int(work["summary"].get("sentences", 4)), True)
+            got, want = to_lines(bullets), json.loads(r["corrected"])
+            recall = sum(any(similar(w, g) for g in got) for w in want) / max(1, len(want))
+            precision = sum(any(similar(g, w) for w in want) for g in got) / max(1, len(got))
+            acts = lambda xs: [x for x in xs if x.startswith("ACTION:")]
+            out.append({"name": (r["subject"] or "(no subject)")[:34], "accepted": bool(info.get("used_ai")), "recall": recall, "precision": precision,
+                        "actions": bool(acts(got)) == bool(acts(want)), "seconds": info.get("seconds", 0.0), "reason": info.get("reason", ""), "bullets": bullets})
+    finally:
+        llm.USER_EXAMPLES_FILE = saved
+    return out
+
+
+def report_mine(results: list[dict], show: bool = False) -> str:
+    lines = []
+    for r in results:
+        lines.append(f"{r['name']:34}  covers your points {int(100 * r['recall']):>3}%  nothing extra {int(100 * r['precision']):>3}%  "
+                     f"actions {'yes' if r['actions'] else 'NO '}  AI accepted {'yes' if r['accepted'] else 'NO '}  {r['seconds']:>6}s")
+        if show:
+            lines += [f"      - {b}" for b in r["bullets"]]
+    n = max(1, len(results))
+    lines += ["", f"{len(results)} of your corrected emails: covers your points {int(100 * sum(r['recall'] for r in results) / n)}%, "
+              f"nothing extra {int(100 * sum(r['precision'] for r in results) / n)}%, actions right {int(100 * sum(r['actions'] for r in results) / n)}%"]
+    return "\n".join(lines)
+
+
 def report(results: list[dict], ai: bool, show: bool = False) -> str:
     lines = []
     for r in results:
@@ -87,6 +132,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--cases", type=int, help="only the first N emails")
     ap.add_argument("--examples", type=int, help="how many worked examples to show the model (default: your setting)")
     ap.add_argument("--show", action="store_true", help="print the bullet points")
+    ap.add_argument("--mine", action="store_true", help="score the AI against YOUR corrections from the AI review tab instead")
     ap.add_argument("--config", help="path to a config.json (default: the app's own)")
     a = ap.parse_args(argv)
 
@@ -99,6 +145,16 @@ def main(argv: list[str] | None = None) -> int:
     if a.examples is not None:
         cfg["llm"]["examples"] = a.examples
     use_ai = not a.builtin
+    if a.mine:
+        from .config import DATA_DIR
+        from .db import DB
+        st = llm.status(cfg["llm"])
+        if not st.get("ok"):
+            print("AI isn't ready:", st.get("message"), file=sys.stderr)
+            return 2
+        res = evaluate_mine(cfg, DB(DATA_DIR / "reminders.db"), a.cases)
+        print(report_mine(res, a.show) if res else "You haven't corrected any summaries yet (AI review tab -> Your version).")
+        return 0
     if use_ai:
         st = llm.status(cfg["llm"])
         if not st.get("ok"):

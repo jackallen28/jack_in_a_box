@@ -11,7 +11,7 @@ from . import icons as icon_lib, llm, plugins, rules
 from .dates import fmt_when
 from .mailparse import Incoming
 from .models import Card, Section
-from . import emailclean
+from . import aifeedback, emailclean
 from .focus import detect_image_request, find_focus, parse_focus
 from .summarise import bullets as extractive_bullets
 from .summarise import finish, overview_and_actions, prepare_thread
@@ -67,6 +67,12 @@ def _cap(text: str, limit: int) -> str:
     return text[:limit].rsplit(" ", 1)[0].rstrip(",;:") + " ... (cut short)"
 
 
+def model_input(thread: list[dict], ctx: str, cfg: dict) -> str:
+    """The email exactly as the model is shown it (header, then each message labelled) - also the format of the worked examples."""
+    sentences, owners = prepare_thread([m["text"] for m in thread])
+    return f"{ctx.strip()}\n" + llm.condense(sentences, int(cfg["llm"].get("max_input_chars", 3000)), owners, thread_labels(thread))
+
+
 def thread_labels(thread: list[dict]) -> list[str]:
     out = []
     for i, m in enumerate(thread):
@@ -102,6 +108,7 @@ def email_card(inc: Incoming, cfg: dict, now: datetime, use_ai: bool = True) -> 
       [school] / [!]                           symbols, as everywhere else
     Signatures, disclaimers, older replies in the chain, links and logo placeholders are removed first."""
     scfg = cfg["summary"]
+    trace = None
     n = max(2, min(8, int(scfg.get("sentences", 4))))
     notes_raw = clean_body(inc.body)
     want_images, notes_raw = detect_image_request(notes_raw)          # "include image" anywhere in your note
@@ -133,9 +140,10 @@ def email_card(inc: Incoming, cfg: dict, now: datetime, use_ai: bool = True) -> 
         sections.append(Section("full", text=text))
     else:
         ctx = f"From: {_name_only(inc.fwd_from)}\nSubject: {inc.subject or inc.fwd_subject}" if inc.fwd_from else f"Subject: {inc.subject}"
-        out, notes, _ = summarise_thread(thread, ctx, cfg, n, use_ai, shown)
+        out, notes, info = summarise_thread(thread, ctx, cfg, n, use_ai, shown)
         card_notes += notes
         summary_out = out
+        trace = {"ctx": ctx, "info": info} if (out and cfg["llm"].get("keep_history", True)) else None
 
     images = []
     if want_images:
@@ -169,8 +177,17 @@ def email_card(inc: Incoming, cfg: dict, now: datetime, use_ai: bool = True) -> 
     subline = ""
     if scfg.get("show_original_sender", True) and inc.fwd_from:
         subline = f"From {_name_only(inc.fwd_from)}" + (f" · {len(thread)} messages" if len(thread) > 1 else "")
-    return Card(kind="email", heading=heading, subline=subline, sections=sections, icons=_dedupe(s_ids + lead_ids + body_ids),
+    card = Card(kind="email", heading=heading, subline=subline, sections=sections, icons=_dedupe(s_ids + lead_ids + body_ids),
                 images=images, source="email", created=now, notes=card_notes, vars={"date": now.strftime("%a %d %b")})
+    if trace:                                   # kept for the AI review tab (the Service stores it once the printout is queued)
+        info = trace["info"]
+        card.trace = {
+            "subject": heading, "sender": _name_only(inc.fwd_from or ""), "thread": [dict(m) for m in thread[:8]],
+            "email": model_input(thread, trace["ctx"], cfg), "used_ai": bool(info.get("used_ai")), "reason": info.get("reason", ""),
+            "seconds": info.get("seconds", 0), "model": cfg["llm"].get("model", "") if info.get("used_ai") else "built-in",
+            "bullets": aifeedback.to_lines(summary_out),
+            "printed": {"summary": next((x.items for x in sections if x.key == "summary" and x.items), []), "actions": actions}}
+    return card
 
 
 def reminder_cards(inc: Incoming, cfg: dict, now: datetime, split: bool | None = None) -> list[Card]:

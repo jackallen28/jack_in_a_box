@@ -183,6 +183,10 @@ SECTIONS = {
         F("llm.examples", "AI: worked examples shown first", "number", "Real-looking emails with a good summary, shown to the model before yours (from app/summary_examples.json). More = more accurate but slower; 0 = none. 1-2 suits a Pi, 3-4 a faster computer.", min=0, max=6),
         F("llm.max_input_chars", "AI: how much of the email it reads (characters)", "number", "The whole conversation if it fits. Longer emails lose their least useful sentences first.", min=500, max=12000, step=100),
         F("llm.num_predict", "AI: longest answer (tokens)", "number", "Room for 3-5 bullet points. Higher is slower.", min=60, max=800, step=10),
+        F("llm.rules", "AI: your standing rules (one per line)", "lines", "Added to the AI's instructions, e.g. 'Always say who the email is from', 'Keep each bullet under 12 words'. Up to 8. You can also make one from a comment on the AI review tab."),
+        F("llm.use_my_examples", "AI: learn from my reviewed summaries", "bool", "Summaries you marked good or corrected on the AI review tab are shown to the model as worked examples (closest first)."),
+        F("llm.keep_history", "AI: keep a history of summarised emails for review", "bool", "Stored only on the Pi. Turn off if you'd rather not keep email text."),
+        F("llm.history_days", "AI: keep that history for (days)", "number", "Reviewed ones you corrected are kept as long as you keep using them; the rest are deleted after this long.", min=1, max=730),
         F("llm.keep_alive", "AI: keep the model in memory for (seconds)", "number", "0 = free the RAM straight after each summary (best on a Pi).", min=0, max=3600),
     ],
     "calendar": [

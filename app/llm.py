@@ -46,6 +46,31 @@ SYSTEM = ("You summarise a forwarded email for a small printed slip. Read the WH
           "Use ONLY facts stated in the email. Never invent names, dates, numbers or amounts.")
 
 EXAMPLES_FILE = Path(__file__).with_name("summary_examples.json")
+USER_EXAMPLES_FILE: Path | None = None     # data/ai_examples.json - your reviewed summaries (set at start-up; see aifeedback.py)
+MINE_BONUS = 1.6                           # your own examples win ties over the built-in ones
+
+
+def system_prompt(cfg: dict | None = None) -> str:
+    """The instructions, plus your standing rules (max 8, kept short so a small model still follows them)."""
+    rules = [str(r).strip()[:200] for r in (cfg or {}).get("rules", []) if str(r).strip()][:8]
+    if not rules:
+        return SYSTEM
+    return SYSTEM + " The reader's own rules, always follow them: " + " ".join(f"({i}) {r.rstrip('.')}." for i, r in enumerate(rules, 1))
+
+
+def ask(body: str) -> dict:
+    return {"role": "user", "content": f"EMAIL:\n{body}\n\nBULLET POINTS:"}
+
+
+def answer_text(bullets: list[str]) -> str:
+    return "\n".join("- " + b for b in bullets)
+
+
+def load_user_examples() -> list[dict]:
+    try:
+        return list(json.loads(USER_EXAMPLES_FILE.read_text("utf-8")).get("mine", [])) if USER_EXAMPLES_FILE else []
+    except (OSError, ValueError, AttributeError):
+        return []
 
 
 @lru_cache(maxsize=1)
@@ -56,14 +81,18 @@ def load_examples() -> dict:
         return {"train": [], "eval": []}
 
 
-def pick_examples(text: str, k: int) -> list[dict]:
-    """The k worked examples most like this email (by shared words) - shown to the model before the real one."""
+def pick_examples(text: str, k: int, use_mine: bool = True) -> list[dict]:
+    """The k worked examples most like this email (by shared words) - shown to the model before the real one.
+    Your own reviewed summaries count extra, so what you corrected is what it learns from first."""
     if k <= 0:
         return []
     words = lambda t: set(re.findall(r"[a-z]{4,}", t.lower()))
     mine = words(text)
-    scored = sorted(load_examples().get("train", []), key=lambda e: -len(mine & words(e["email"])) / (1 + len(words(e["email"])) ** 0.5))
-    return scored[:k]
+    pool = [(e, 1.0) for e in load_examples().get("train", [])]
+    if use_mine:
+        pool += [(e, MINE_BONUS) for e in load_user_examples()]
+    score = lambda pair: len(mine & words(pair[0]["email"])) / (1 + len(words(pair[0]["email"])) ** 0.5) * pair[1]
+    return [e for e, _ in sorted(pool, key=lambda p: -score(p))[:k]]
 
 
 _WEEK = r"mon|tue|wed|thu|fri|sat|sun"
@@ -167,10 +196,9 @@ def run(sentences: list[str], n: int, cfg: dict, context: str = "", owners: list
         return None, info
     text = condense(sentences, int(cfg.get("max_input_chars", 3000)), owners, labels)
     head = f"{context.strip()}\n" if context.strip() else ""      # e.g. "From: Dave Smith / Subject: Invoice" (also allowed in the answer)
-    ask = lambda body: {"role": "user", "content": f"EMAIL:\n{body}\n\nBULLET POINTS:"}
-    messages = [{"role": "system", "content": SYSTEM}]
-    for ex in pick_examples(head + text, int(cfg.get("examples", 1))):      # worked examples ("training data")
-        messages += [ask(ex["email"]), {"role": "assistant", "content": "\n".join("- " + b for b in ex["bullets"])}]
+    messages = [{"role": "system", "content": system_prompt(cfg)}]
+    for ex in pick_examples(head + text, int(cfg.get("examples", 1)), bool(cfg.get("use_my_examples", True))):      # worked examples ("training data")
+        messages += [ask(ex["email"]), {"role": "assistant", "content": answer_text(ex["bullets"])}]
     messages.append(ask(f"{head}{text}"))
     payload = {
         "model": cfg.get("model", "qwen2.5:0.5b"), "stream": False,

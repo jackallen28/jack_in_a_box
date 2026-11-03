@@ -69,7 +69,7 @@ $("#logout").addEventListener("click", async () => { await api("/api/logout", { 
 /* ---------------------------------------------------------------- tabs */
 const TABS = [
   ["dashboard", "Dashboard"], ["print", "Print"], ["form", "Google Form"], ["messages", "Messages"], ["symbols", "Symbols"], ["power", "Power & fan"], ["templates", "Templates"], ["email", "Email"], ["calendar", "Calendar"],
-  ["text", "Text & sorting"], ["rules", "Rules"], ["printer", "Printer"], ["integrations", "Integrations"],
+  ["text", "Text & sorting"], ["aireview", "AI review"], ["rules", "Rules"], ["printer", "Printer"], ["integrations", "Integrations"],
   ["playground", "Try it"], ["account", "Account"],
 ];
 function renderTabs() {
@@ -79,7 +79,7 @@ function renderTabs() {
 function go(tab) {
   TAB = tab; clearInterval(POLL); POLL = null; renderTabs();
   const main = $("#main"); main.replaceChildren();
-  ({ dashboard, print: printPage, form: formPage, messages, symbols, power: powerPage, templates, email: () => simple("email", "Email account"), calendar, text: () => simple("text", "Text, dates & summaries"),
+  ({ dashboard, print: printPage, form: formPage, aireview: aiReviewPage, messages, symbols, power: powerPage, templates, email: () => simple("email", "Email account"), calendar, text: () => simple("text", "Text, dates & summaries"),
      rules, printer: () => simple("printer", "Printer"), integrations, playground, account }[tab])(main);
   window.scrollTo(0, 0);
 }
@@ -831,3 +831,76 @@ async function boot() {
   go(TAB);
 }
 boot().catch(e => { if (e.message !== "login") console.error(e); });
+
+
+/* ---------------------------------------------------------------- AI review: history, corrections, training data */
+function aiReviewPage(main) {
+  let filter = "new";
+  const counts = h("div", { class: "small" }), list = h("div", {}), rulesBox = h("div", {});
+  const RULE_FIELDS = ["llm.rules", "llm.use_my_examples", "llm.examples", "llm.keep_history", "llm.history_days"];
+  const drawRules = () => rulesBox.replaceChildren(form(SCHEMA.sections.text.filter(f => RULE_FIELDS.includes(f.path))));
+  const bulletText = b => b.startsWith("ACTION:") ? "☐ " + b.slice(7).trim() : "• " + b;
+
+  main.append(h("div", { class: "card" }, h("h2", {}, "AI review: teach it what a good summary looks like"),
+    h("p", { class: "small" }, "Every forwarded email the box summarises is kept here (on the Pi only), with the printout and what the AI wrote. Mark each one ",
+      h("strong", {}, "good"), " or type ", h("strong", {}, "your version"), ". Then:"),
+    h("ul", { class: "small" },
+      h("li", {}, h("strong", {}, "Worked examples. "), "Your good and corrected summaries are shown to the model before a similar email, ahead of the built-in examples. This is what actually improves the next summary."),
+      h("li", {}, h("strong", {}, "Standing rules. "), "A comment such as “always say who it's from” can be made a rule that's added to the AI's instructions every time."),
+      h("li", {}, h("strong", {}, "Real training. "), "A 1 GB Pi can't retrain a model, but you can download everything you reviewed as training data (JSONL) for fine-tuning on a Mac or PC.")),
+    counts,
+    h("div", { class: "row", style: "margin-top:8px" },
+      h("a", { class: "btn small", href: "/api/ai-training.jsonl", download: "jack-in-a-box-ai-training.jsonl" }, "Download training data"),
+      h("button", { class: "btn small danger", onclick: async () => {
+        if (!confirm("Delete the history of emails you haven't reviewed? Summaries you marked good or corrected are kept.")) return;
+        const r = await api("/api/ai-runs/clear", { method: "POST", json: {} }); toast(`Deleted ${r.deleted}`); load();
+      } }, "Delete unreviewed history"))));
+  main.append(h("div", { class: "card" }, h("h3", {}, "Your rules and settings"), rulesBox,
+    h("p", { class: "small muted" }, "Changes here use the usual Save bar at the bottom.")));
+  drawRules();
+
+  const filt = h("select", { onchange: e => { filter = e.target.value; load(); } },
+    [["new", "Waiting for my review"], ["reviewed", "Reviewed"], ["ai", "Written by the AI"], ["all", "Everything"]].map(([v, l]) => h("option", { value: v }, l)));
+  main.append(h("div", { class: "card" }, h("div", { class: "row" }, h("h3", { style: "flex:1;margin:0" }, "Summaries"), filt), list));
+
+  function runCard(r) {
+    const text = (r.corrected || r.bullets).join("\n");
+    const box = h("textarea", { style: "min-height:120px", spellcheck: "true" }, text);
+    const comment = h("input", { type: "text", placeholder: "Comment (optional): what was wrong or what you'd prefer", value: r.comment || "", style: "width:100%" });
+    const rule = h("input", { type: "checkbox" });
+    const send = async verdict => {
+      const res = await api(`/api/ai-runs/${r.id}/feedback`, { method: "POST", json: { verdict, corrected: box.value, comment: comment.value, rule: rule.checked } });
+      toast(verdict === "bad" ? "Noted" : "Saved: it will learn from this");
+      if (rule.checked && !dirty) { CFG = await api("/api/config"); SAVED = JSON.parse(JSON.stringify(CFG)); drawRules(); }
+      load();
+    };
+    const label = { new: "waiting", good: "marked good", fix: "corrected", bad: "marked bad" }[r.status];
+    return h("div", { class: "card", style: "background:var(--bg)" },
+      h("div", { class: "row", style: "align-items:flex-start" },
+        r.job_id ? h("img", { src: `/history/${r.job_id}.png`, loading: "lazy", style: "width:90px;border:1px solid var(--line);background:#fff", onerror: e => e.target.remove(), onclick: e => lightbox(e.target.src) }) : null,
+        h("div", { style: "flex:1;min-width:0" },
+          h("div", {}, h("strong", {}, r.subject || "(no subject)"), "  ", h("span", { class: "badge " + (r.status === "new" ? "pending" : r.status === "bad" ? "failed" : "printed") }, label)),
+          h("div", { class: "small muted" }, `${r.sender ? "From " + r.sender + " · " : ""}${r.created.slice(5, 16).replace("T", " ")} · ` +
+            (r.used_ai ? `written by the AI (${r.model}, ${r.seconds}s)` : "built-in summary" + (r.reason ? ` (${r.reason})` : ""))))),
+      h("div", { class: "small", style: "margin:8px 0 2px" }, h("strong", {}, "What it wrote")),
+      h("div", { class: "small" }, r.bullets.map(b => h("div", {}, bulletText(b)))),
+      h("details", { class: "small", style: "margin:6px 0" }, h("summary", {}, "What the AI was shown"),
+        h("pre", { style: "white-space:pre-wrap;font-size:.75rem", id: `ai-in-${r.id}` }, "")),
+      h("label", { class: "small" }, h("strong", {}, "Your version"), " (one bullet per line; start a line with ", h("code", {}, "ACTION:"), " for something to do)"),
+      box, h("div", { style: "margin-top:6px" }, comment),
+      h("label", { class: "small", style: "display:block;margin:4px 0" }, rule, " make my comment a standing rule"),
+      h("div", { class: "row" },
+        h("button", { class: "btn small primary", onclick: () => send("good") }, "✔ It's good"),
+        h("button", { class: "btn small", onclick: () => send("fix") }, "Save my version"),
+        h("button", { class: "btn small", onclick: () => send("bad") }, "✘ Bad, no replacement"),
+        h("button", { class: "btn small danger", onclick: async () => { if (confirm("Delete this from the history?")) { await api(`/api/ai-runs/${r.id}/delete`, { method: "POST" }); load(); } } }, "Delete")));
+  }
+
+  async function load() {
+    const r = await api("/api/ai-runs?filter=" + filter + "&limit=30"), c = r.counts;
+    counts.textContent = r.keep ? `${c.total} kept · ${c.new} waiting for your review · ${c.good} good · ${c.fix} corrected · ${c.bad} marked bad` : "History is switched off (see the setting below), so nothing new is being kept.";
+    list.replaceChildren(...(r.runs.length ? r.runs.map(runCard) : [h("div", { class: "muted small" }, filter === "new" ? "Nothing waiting. Forward an email to the printer and its summary appears here." : "Nothing here yet.")]));
+    for (const run of r.runs) api(`/api/ai-runs/${run.id}`).then(full => { const el = document.getElementById(`ai-in-${run.id}`); if (el) el.textContent = full.email; }).catch(() => {});
+  }
+  load();
+}

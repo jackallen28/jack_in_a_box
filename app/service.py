@@ -12,7 +12,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from . import plugins
+from . import aifeedback, plugins
 from .config import DATA_DIR, ConfigStore
 from .db import DB
 from .models import Card
@@ -73,6 +73,11 @@ class Service:
             img.save(path)
             self.db.execute("UPDATE jobs SET png=? WHERE id=?", (path.name, jid))
             ids.append(jid)
+        if card.trace and self.cfg.data["llm"].get("keep_history", True):
+            try:
+                aifeedback.record(self.db, card.trace, ids[0])
+            except Exception:
+                log.exception("Couldn't keep the AI summary for review")
         log.info("%s %s '%s'%s", "Holding for button:" if hold else (f"Scheduled for {due.astimezone():%a %d %b %H:%M}:" if later else "Queued"), card.kind,
                  (card.heading or card.summary())[:50], f" x{copies}" if copies > 1 else "")
         self.wake.set()
@@ -231,6 +236,7 @@ class Service:
         self.db.execute("DELETE FROM seen WHERE ts<?", (cutoff,))
         self.db.execute("DELETE FROM sheet_rows WHERE first_seen<? AND status IN ('deleted','ignored','empty')", (cutoff,))
         self.db.execute("DELETE FROM cal_events WHERE first_seen<? AND status!='pending'", (cutoff,))
+        aifeedback.prune(self.db, int(self.cfg.data["llm"].get("history_days", 90)))
 
     # ---------------------------------------------------------------- status
     def status(self) -> dict:

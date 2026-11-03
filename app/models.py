@@ -33,6 +33,7 @@ class Card:
     source: str = ""               # email | calendar | api | test
     created: datetime | None = None
     notes: list[str] = field(default_factory=list)   # corrections made, for the log
+    trace: dict | None = field(default=None, repr=False)   # forward summaries: what the AI saw/answered (kept for review, see aifeedback.py)
 
     def summary(self) -> str:
         for s in self.sections:

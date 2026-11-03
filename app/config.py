@@ -207,6 +207,10 @@ DEFAULTS: dict = {
         "num_predict": 220,
         "max_input_chars": 3000,    # how much of the email the AI reads (the whole thing if it fits)
         "examples": 1,              # worked examples shown before your email (0 = none; see app/summary_examples.json)
+        "keep_history": True,       # keep each forwarded email's summary for review (data/ only, never uploaded)
+        "history_days": 90,
+        "use_my_examples": True,    # your reviewed summaries (AI review tab) are shown to the model as worked examples
+        "rules": [],                # your standing rules, e.g. "Always name who the email is from" (added to the AI's instructions)
     },
     "calendar": {
         "enabled": True,

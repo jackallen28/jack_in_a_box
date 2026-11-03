@@ -24,6 +24,19 @@ CREATE TABLE IF NOT EXISTS sheet_rows (
     status TEXT NOT NULL,                        -- queued | empty | ignored | error | deleted
     jobs TEXT, note TEXT
 );
+CREATE TABLE IF NOT EXISTS ai_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created TEXT NOT NULL, job_id INTEGER,       -- the printout (jobs.id) this summary went onto
+    subject TEXT, sender TEXT,
+    email TEXT,                                  -- exactly what the model was shown (header + labelled thread)
+    thread TEXT,                                 -- JSON: the cleaned messages
+    used_ai INTEGER NOT NULL DEFAULT 0, model TEXT, seconds REAL, reason TEXT,
+    bullets TEXT,                                -- JSON: the summary produced (info bullets + "ACTION: ..." lines)
+    printed TEXT,                                -- JSON: {"summary": [...], "actions": [...]} as printed
+    status TEXT NOT NULL DEFAULT 'new',          -- new | good | fix | bad
+    comment TEXT, corrected TEXT,                -- your note, and your corrected bullets (JSON list)
+    train INTEGER NOT NULL DEFAULT 1
+);
 CREATE TABLE IF NOT EXISTS cal_events (
     key TEXT PRIMARY KEY, cal_id TEXT, start TEXT, end TEXT,
     first_seen TEXT NOT NULL, due TEXT,

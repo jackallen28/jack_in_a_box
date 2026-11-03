@@ -304,6 +304,28 @@ Prefer not to run it on the Pi? Set *AI: Ollama address* to another computer on 
 in seconds, and those are far better at understanding a whole email thread than the 0.5B model that fits on the Pi. Set *AI: model* to match,
 and raise *AI: worked examples shown first* to 3 or 4.
 
+### AI review: keep the history, correct it, feed it back
+Open the **AI review** tab. Every forwarded email the box summarises is kept there (in `data/` on the Pi only, never uploaded or committed), next to its
+printout, what the AI was shown, and what it wrote (built-in summaries are kept too, marked as such). For each one you can:
+
+* **It's good**: the summary is used as a worked example as it is.
+* **Save my version**: edit the bullets (one per line; start a line with `ACTION:` for a to-do) and save. Your version becomes the worked example.
+* **Bad, no replacement**: noted, never used as an example.
+* **Comment + "make my comment a standing rule"**: e.g. *Always say who the email is from*. Rules (up to 8, also editable on the tab) are added to the AI's
+  instructions on every summary.
+
+What that does to the next summary: your good and corrected summaries are shown to the model as worked examples **ahead of the built-in 10**, picked by how
+similar the email is (setting *AI: learn from my reviewed summaries*; *AI: worked examples shown first* sets how many). That, plus your rules, is what
+changes its behaviour. A 1 GB Pi cannot retrain the model itself, so for real fine-tuning press **Download training data**: a `.jsonl` file of
+system / email / your-answer chat records, ready for a fine-tuning tool on a Mac or PC.
+
+Check whether your corrections are making it better (each corrected email is hidden from the model while it is tested, so it can't just copy):
+```bash
+cd ~/jack_in_a_box && venv/bin/python -m app.evaluate --mine --show
+```
+Unreviewed history is deleted after *AI: keep that history for (days)* (default 90, at most 500 kept); good and corrected ones stay. Turn the history off with
+*AI: keep a history of summarised emails for review*, or press **Delete unreviewed history** any time.
+
 ### "Training" the AI (it can't be retrained on a Pi, but it can be taught by example)
 Real training needs a GPU and gigabytes of RAM; a 1 GB Pi can't do it. What works, and what this box does instead:
 

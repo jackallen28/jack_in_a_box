@@ -14,11 +14,11 @@ import secrets
 import time
 from datetime import datetime
 
-from flask import Flask, jsonify, request, send_file, send_from_directory, session
+from flask import Flask, Response, jsonify, request, send_file, send_from_directory, session
 from PIL import Image, ImageOps
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from . import icons as icon_lib, llm, plugins, schema, sheet as sheet_mod
+from . import aifeedback, icons as icon_lib, llm, plugins, schema, sheet as sheet_mod
 from .config import APP_DIR, DATA_DIR, ROOT, KIND_DEFAULTS, ConfigStore, default_template, merge
 from .mailbox import MailPoller
 from .mailparse import Incoming, _load_image, parse
@@ -426,6 +426,51 @@ def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button, 
     @app.get("/api/ai-test")
     def ai_test_result():
         return jsonify(llm.test_state())
+
+    # ------------------------------------------------------------------ AI review: history, your corrections, training data
+    def _sync_examples():
+        aifeedback.write_examples(svc.db, svc.data_dir / "ai_examples.json")
+
+    @app.get("/api/ai-runs")
+    def ai_runs():
+        return jsonify(counts=aifeedback.counts(svc.db), rules=cfg.data["llm"].get("rules", []),
+                       keep=bool(cfg.data["llm"].get("keep_history", True)),
+                       runs=aifeedback.list_runs(svc.db, request.args.get("filter", "all"), int(request.args.get("limit", 30))))
+
+    @app.get("/api/ai-runs/<int:rid>")
+    def ai_run(rid):
+        r = aifeedback.get_run(svc.db, rid)
+        return (jsonify(r), 200) if r else (jsonify(error="not found"), 404)
+
+    @app.post("/api/ai-runs/<int:rid>/feedback")
+    def ai_feedback(rid):
+        b = request.json or {}
+        run = aifeedback.set_feedback(svc.db, rid, str(b.get("verdict", "")), str(b.get("corrected", "")), str(b.get("comment", "")))
+        if run is None:
+            return jsonify(error="not found"), 404
+        if b.get("rule") and run["comment"]:                       # "make this a standing rule"
+            d = cfg.data
+            d["llm"]["rules"] = aifeedback.add_rule(list(d["llm"].get("rules", [])), run["comment"])
+            cfg.replace(d)
+        _sync_examples()
+        return jsonify(run=run, rules=cfg.data["llm"].get("rules", []))
+
+    @app.post("/api/ai-runs/<int:rid>/delete")
+    def ai_run_delete(rid):
+        ok = aifeedback.delete(svc.db, rid)
+        _sync_examples()
+        return jsonify(ok=ok)
+
+    @app.post("/api/ai-runs/clear")
+    def ai_runs_clear():
+        n = aifeedback.clear(svc.db, keep_reviewed=not (request.json or {}).get("everything"))
+        _sync_examples()
+        return jsonify(deleted=n)
+
+    @app.get("/api/ai-training.jsonl")
+    def ai_training():
+        body = aifeedback.export_jsonl(svc.db, llm.system_prompt(cfg.data["llm"]), llm.ask)
+        return Response(body, mimetype="application/x-ndjson", headers={"Content-Disposition": "attachment; filename=jack-in-a-box-ai-training.jsonl"})
 
     @app.post("/api/sheet-script")
     def sheet_script():
