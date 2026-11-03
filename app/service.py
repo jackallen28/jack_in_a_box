@@ -47,7 +47,7 @@ class Service:
     def render(self, card: Card) -> Image.Image:
         c = self.cfg.data
         name = card.template or card.kind
-        return render_card(card, c["templates"].get(name) or c["templates"]["reminder"], c["printer"])
+        return render_card(card, c["templates"].get(name) or c["templates"]["reminder"], c["printer"], c["icons"])
 
     def submit(self, card: Card, copies: int = 1, hold: bool = False) -> list[int]:
         img = self.render(card)
@@ -91,6 +91,17 @@ class Service:
         if job_id is not None:
             sql, args = sql + " AND id=?", (job_id,)
         return self.db.execute(sql, args).rowcount
+
+    def submit_image(self, img: Image.Image, title: str, kind: str = "sheet", source: str = "web") -> int:
+        """Queue an already-drawn bitmap (e.g. the symbol cheat-sheet)."""
+        cur = self.db.execute("INSERT INTO jobs(created, kind, source, title, notes, status) VALUES (?,?,?,?,?, 'pending')",
+                              (datetime.now().isoformat(timespec="seconds"), kind, source, title[:120], "[]"))
+        jid = cur.lastrowid
+        path = self.hist_dir / f"{jid}.png"
+        img.save(path)
+        self.db.execute("UPDATE jobs SET png=? WHERE id=?", (path.name, jid))
+        self.wake.set()
+        return jid
 
     def reprint(self, job_id: int) -> int | None:
         row = self.db.one("SELECT * FROM jobs WHERE id=?", (job_id,))

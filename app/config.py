@@ -25,25 +25,25 @@ KIND_DEFAULTS = {
         "label": "Reminder",
         "title": "REMINDER",
         "subtitle": "",
-        "order": ["title", "heading", "body", "images", "footer"],
+        "order": ["title", "icons", "heading", "body", "images", "footer"],
     },
     "calendar": {
         "label": "Calendar event",
         "title": "EVENT",
         "subtitle": "{day}",
-        "order": ["title", "graphic", "heading", "body", "footer"],
+        "order": ["title", "icons", "graphic", "heading", "body", "footer"],
     },
     "message": {
         "label": "Message from a friend",
         "title": "MESSAGE",
         "subtitle": "from {name}",
-        "order": ["title", "heading", "body", "images", "footer"],
+        "order": ["title", "icons", "heading", "body", "images", "footer"],
     },
     "email": {
         "label": "Email summary",
         "title": "EMAIL",
         "subtitle": "",
-        "order": ["title", "heading", "body", "images", "footer"],
+        "order": ["title", "icons", "heading", "body", "images", "footer"],
     },
 }
 
@@ -68,6 +68,13 @@ def default_template(kind: str = "reminder") -> dict:
             "font": "bungee",
             "size_pt": 30,
             "style": "outline",
+            "align": "center",
+        },
+        "icons": {
+            "enabled": True,
+            "size_mm": 20,
+            "max": 6,
+            "gap_mm": 3,
             "align": "center",
         },
         "graphic": {
@@ -202,6 +209,12 @@ DEFAULTS: dict = {
         "notes_chars": 300,
     },
     "updates": {"enabled": True},
+    # Symbols: [school], [!] ... see app/icons.py.  Built-ins are always available; this holds your changes.
+    "icons": {
+        "disabled": [],      # built-in ids you've switched off
+        "aliases": {},       # {"school": ["sch", "homework"]}  extra tag names for built-ins
+        "custom": [],        # [{"id","name","tags":[...],"file":"<upload>.png","mode":"line"|"photo"}]
+    },
     "calendars": [],
     # People allowed to send you messages.  Their emails become MESSAGE printouts that wait
     # for the button (unless "bypass_queue" is on for that person).

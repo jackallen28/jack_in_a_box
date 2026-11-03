@@ -38,7 +38,7 @@ TEMPLATE_GROUPS = [
     ]},
     {"title": "Section order", "fields": [
         F("t.order", "Top to bottom", "order", "Use the arrows; turn sections on/off in their own groups below.",
-          options=opts(("title", "Title"), ("graphic", "Graphic / logo"), ("heading", "Heading (subject)"),
+          options=opts(("title", "Title"), ("icons", "Symbols"), ("graphic", "Graphic / logo"), ("heading", "Heading (subject)"),
                        ("body", "Text box"), ("images", "Email pictures"), ("divider", "Dotted divider"), ("footer", "Footer"))),
     ]},
     {"title": "Title (e.g. REMINDER)", "fields": [
@@ -49,6 +49,13 @@ TEMPLATE_GROUPS = [
         F("t.title.size_pt", "Size (pt)", "number", "Shrinks automatically if too wide.", min=10, max=80, step=1),
         F("t.title.style", "Style", "select", options=opts(("outline", "Outlined"), ("solid", "Solid"), ("shadow", "Shadow"), ("inverse", "White on black bar"))),
         F("t.title.align", "Alignment", "select", options=ALIGN),
+    ]},
+    {"title": "Symbols row ([school], [!] ...)", "fields": [
+        F("t.icons.enabled", "Print symbols", "bool", "Symbols chosen with [tags] in the email print as a row above the heading."),
+        F("t.icons.size_mm", "Symbol size (mm)", "number", "Shrinks automatically when there are several.", min=8, max=60, step=1),
+        F("t.icons.max", "Most symbols per printout", "number", min=1, max=8),
+        F("t.icons.gap_mm", "Space between (mm)", "number", min=0, max=15, step=0.5),
+        F("t.icons.align", "Alignment", "select", options=ALIGN),
     ]},
     {"title": "Graphic / logo", "fields": [
         F("t.graphic.enabled", "Show graphic", "bool"),

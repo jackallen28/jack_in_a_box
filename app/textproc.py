@@ -12,6 +12,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from . import icons as icon_lib
 from .dates import Deadline, extract_deadline
 
 # --------------------------------------------------------------------------
@@ -112,6 +113,7 @@ class Item:
     deadline: Deadline | None = None
     priority: bool = False
     checklist: list[str] = field(default_factory=list)
+    icons: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)  # what was changed, for the log
     index: int = 0
 
@@ -203,45 +205,87 @@ def split_actions(line: str) -> list[str]:
     return [i for i in items if i]
 
 
-def split_blocks(text: str, split: bool = True) -> list[dict]:
-    """Return blocks: {"text": str} or {"text": heading, "checklist": [...]}.
+def _dedupe(ids):
+    out: list[str] = []
+    for i in ids:
+        if i not in out:
+            out.append(i)
+    return out
+
+
+def pop_leading_tags(text: str, cfg: dict) -> tuple[list[str], str]:
+    """If the FIRST line is only tags ("[school] [!]"), they belong to every reminder in the email."""
+    lines = text.split("\n")
+    i = 0
+    while i < len(lines) and not lines[i].strip():
+        i += 1
+    if i < len(lines) and icon_lib.is_tags_only(lines[i], cfg):
+        return icon_lib.extract_tags(lines[i], cfg)[1], "\n".join(lines[i + 1:]).lstrip("\n")
+    return [], text
+
+
+def split_blocks(text: str, split: bool = True, cfg: dict | None = None) -> list[dict]:
+    """Return blocks: {"text": str, "icons": [...]} or with a "checklist": [...].
 
     * Blank lines separate reminders.
     * A single paragraph with one task per line is read as a list of tasks.
     * "Shopping:" followed by bullets is ONE reminder with a checklist.
     * Inside one line, "and"/commas split only where each part is an action.
+    * With ``cfg``, [symbol] tags are lifted out of each line and stay with the reminder(s) made from that
+      line; a line holding only tags decorates the next reminder.
     """
+    def tag(line: str) -> tuple[str, list[str]]:
+        return icon_lib.extract_tags(line, cfg) if cfg is not None else (line, [])
+
     paragraphs = [p for p in re.split(r"\n\s*\n", text.strip()) if p.strip()]
     blocks: list[dict] = []
+    pending: list[str] = []
     one_per_line = len(paragraphs) == 1
 
+    def add(block: dict, ids: list[str]) -> None:
+        ids = _dedupe(pending + ids)
+        pending.clear()
+        if ids:
+            block["icons"] = ids
+        blocks.append(block)
+
     for para in paragraphs:
-        lines = [l for l in para.split("\n") if l.strip()]
+        cleaned: list[tuple[str, list[str]]] = []   # tags-only lines stay in place as ("", ids) markers
+        for l in (l for l in para.split("\n") if l.strip()):
+            cleaned.append(tag(l))
+        lines = [c for c, _ in cleaned if c.strip()]
+        para_ids = _dedupe([i for _, ids in cleaned for i in ids])
+        if not lines:
+            pending.extend(para_ids)         # only tags here: they decorate the next reminder
+            continue
         bulleted = [bool(_BULLET.match(l)) for l in lines]
         if len(lines) > 1 and lines[0].rstrip().endswith(":") and all(bulleted[1:]):
-            blocks.append({"text": lines[0].rstrip(": ").strip(),
-                           "checklist": [_BULLET.sub("", l).strip() for l in lines[1:]]})
+            add({"text": lines[0].rstrip(": ").strip(),
+                 "checklist": [_BULLET.sub("", l).strip() for l in lines[1:]]}, para_ids)
             continue
         if len(lines) > 1 and not one_per_line and not any(bulleted):
-            blocks.append({"text": "\n".join(l.strip() for l in lines)})  # one multi-line reminder
+            add({"text": "\n".join(l.strip() for l in lines)}, para_ids)      # one multi-line reminder
             continue
-        for l in lines:
+        for l, ids in cleaned:
+            if not l.strip():
+                pending.extend(ids)          # a tags-only line decorates the NEXT reminder
+                continue
             l = _BULLET.sub("", l).strip()
             if not l:
                 continue
             if not split:
-                blocks.append({"text": l})
+                add({"text": l}, ids)
                 continue
             sentences = _split_sentences(l)
             merged: list[str] = []
-            for s in sentences:
-                if merged and not starts_with_action(s):
-                    merged[-1] += " " + s  # detail belonging to the previous task
+            for sent in sentences:
+                if merged and not starts_with_action(sent):
+                    merged[-1] += " " + sent  # detail belonging to the previous task
                 else:
-                    merged.append(s)
-            for s in merged:
-                for a in split_actions(s):
-                    blocks.append({"text": a})
+                    merged.append(sent)
+            for sent in merged:
+                for a in split_actions(sent):
+                    add({"text": a}, ids)
     return blocks
 
 
@@ -275,12 +319,33 @@ def _match_case(src: str, dst: str) -> str:
 
 _WORD = re.compile(r"[A-Za-z][A-Za-z']*")
 
+# British/Australian spellings the (American-leaning) dictionary doesn't know but that are perfectly right.
+_UK_WORDS = {"cheque", "cheques", "licence", "licences", "practise", "practised", "programme", "programmes", "grey",
+             "mum", "mums", "aluminium", "pyjamas", "kerb", "plough", "storey", "draught", "tyre", "tyres", "analogue",
+             "catalogue", "dialogue", "jewellery", "mould", "sceptical", "speciality", "whilst", "arvo", "brekkie"}
+_UK_SUFFIXES = [("ise", "ize"), ("ised", "ized"), ("ises", "izes"), ("ising", "izing"), ("isation", "ization"),
+                ("yse", "yze"), ("ysed", "yzed"), ("tre", "ter"), ("tres", "ters"), ("yre", "ire"), ("yres", "ires"),
+                ("ence", "ense"), ("lled", "led"), ("lling", "ling"), ("ller", "ler"), ("ogue", "og")]
+
+
+def _is_uk_spelling(word: str, speller) -> bool:
+    """colour/organise/centre/tyres ... valid when the American form is a real word."""
+    w = word.lower()
+    if w in _UK_WORDS:
+        return True
+    forms = [w.replace("our", "or")] if "our" in w else []
+    forms += [w[: -len(a)] + b for a, b in _UK_SUFFIXES if w.endswith(a)]
+    return any(f != w and not speller.unknown([f]) for f in forms)
+
 
 def fix_spelling(text: str, custom_words=(), notes: list[str] | None = None) -> str:
     custom = {w.lower() for w in custom_words}
     speller = _get_speller()
     out, last = [], 0
+    tag_spans = [m.span() for m in re.finditer(r"\[[^\[\]\n]{1,30}\]", text)]    # [school], [wrk] ... not ours to fix
     for m in _WORD.finditer(text):
+        if any(a <= m.start() < b for a, b in tag_spans):
+            continue
         w = m.group(0)
         lw = w.lower()
         s, e = m.start(), m.end()
@@ -306,7 +371,7 @@ def fix_spelling(text: str, custom_words=(), notes: list[str] | None = None) -> 
         elif speller is not None and len(w) >= 4 and "'" not in w and not w.isupper():
             sentence_start = not text[:s].strip() or text[:s].rstrip()[-1:] in ".!?\n:"
             capitalised = w[0].isupper() and not sentence_start
-            if lw in speller.unknown([lw]) and not capitalised:
+            if lw in speller.unknown([lw]) and not capitalised and not _is_uk_spelling(w, speller):
                 if prev_word in _PERSON_CONTEXT:
                     repl = w[0].upper() + w[1:]  # call sarah -> call Sarah
                 else:
@@ -429,6 +494,7 @@ def build_items(text: str, ref: datetime, cfg: dict, *, split: bool | None = Non
     split = tcfg.get("split", True) if split is None else split
     date_order = cfg["general"].get("date_order", "dmy")
     text = clean_body(text)
+    lead_ids, text = pop_leading_tags(text, cfg)
     if not text:
         return []
     # Spelling goes first: "wahs the dishes tomorow" must be read as an action
@@ -437,9 +503,10 @@ def build_items(text: str, ref: datetime, cfg: dict, *, split: bool | None = Non
     if tcfg.get("fix_spelling", True):
         text = "\n".join(fix_spelling(l, tcfg.get("custom_words", []), spell_notes) for l in text.split("\n"))
     if split:
-        blocks = split_blocks(text, True)
+        blocks = split_blocks(text, True, cfg)
     else:
-        blocks = [{"text": text}]
+        clean, ids = icon_lib.extract_tags(text, cfg)
+        blocks = [{"text": clean, **({"icons": ids} if ids else {})}]
     items: list[Item] = []
     for i, b in enumerate(blocks):
         raw = b["text"]
@@ -459,7 +526,7 @@ def build_items(text: str, ref: datetime, cfg: dict, *, split: bool | None = Non
         if not fixed and not checklist and deadline is None:
             continue
         items.append(Item(text=fixed or "(see deadline)", deadline=deadline, priority=priority,
-                          checklist=checklist, notes=notes, index=i))
+                          checklist=checklist, notes=notes, index=i, icons=_dedupe(lead_ids + b.get("icons", []))))
     return items
 
 

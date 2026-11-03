@@ -445,3 +445,13 @@ def test_network_printer_receives_the_bytes_and_check_reports_reachability():
 def test_check_reports_missing_usb_device():
     ok, msg = printer.check({"backend": "file", "device": "/dev/usb/nope"})
     assert not ok and "not found" in msg
+
+
+def test_british_and_australian_spellings_are_left_alone_but_real_typos_still_fixed(env):
+    cfg, *_ = env
+    text = "pump the tyres, organise the centre, pick a favourite colour, post the cheque, ring mum this arvo"
+    out = items(text, cfg)
+    joined = " ".join(i.text for i in out).lower()
+    for ok in ("tyres", "organise", "centre", "favourite", "colour", "cheque", "mum", "arvo"):
+        assert ok in joined, (ok, joined)
+    assert items("wahs the dishs and relpy to emial", cfg)[0].text.lower().startswith("wash the dishes")

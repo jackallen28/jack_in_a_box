@@ -68,7 +68,7 @@ $("#logout").addEventListener("click", async () => { await api("/api/logout", { 
 
 /* ---------------------------------------------------------------- tabs */
 const TABS = [
-  ["dashboard", "Dashboard"], ["print", "Print"], ["messages", "Messages"], ["templates", "Templates"], ["email", "Email"], ["calendar", "Calendar"],
+  ["dashboard", "Dashboard"], ["print", "Print"], ["messages", "Messages"], ["symbols", "Symbols"], ["templates", "Templates"], ["email", "Email"], ["calendar", "Calendar"],
   ["text", "Text & sorting"], ["rules", "Rules"], ["printer", "Printer"], ["integrations", "Integrations"],
   ["playground", "Try it"], ["account", "Account"],
 ];
@@ -79,7 +79,7 @@ function renderTabs() {
 function go(tab) {
   TAB = tab; clearInterval(POLL); POLL = null; renderTabs();
   const main = $("#main"); main.replaceChildren();
-  ({ dashboard, print: printPage, messages, templates, email: () => simple("email", "Email account"), calendar, text: () => simple("text", "Text, dates & summaries"),
+  ({ dashboard, print: printPage, messages, symbols, templates, email: () => simple("email", "Email account"), calendar, text: () => simple("text", "Text, dates & summaries"),
      rules, printer: () => simple("printer", "Printer"), integrations, playground, account }[tab])(main);
   window.scrollTo(0, 0);
 }
@@ -495,6 +495,89 @@ function messages(main) {
         : h("div", { class: "muted small", style: "margin-top:6px" }, "Nothing waiting."));
   }
   draw(); loadWaiting(); POLL = setInterval(() => loadWaiting().catch(() => {}), 5000);
+}
+
+/* ---------------------------------------------------------------- symbols */
+function symbols(main) {
+  const grid = h("div", { class: "symgrid" });
+  const csv = v => v.split(",").map(t => t.trim().replace(/^\[|\]$/g, "")).filter(Boolean);
+  main.append(h("div", { class: "card small" }, h("h2", {}, "Symbols"),
+    "Put a symbol's name in square brackets in the ", h("strong", {}, "subject or text"), " of an email and it prints above the heading. ",
+    "Full or short name, any capitalisation: ", h("code", {}, "[school]"), " ", h("code", {}, "[!]"), " ", h("code", {}, "[3D printer]"), " ",
+    h("code", {}, "[work][?]"), " (several are fine). A tag in the subject, or alone on the first line, applies to every reminder in the email; a tag on a task's own line applies to just that reminder. ",
+    "Tags I don't know (like [draft]) are left as normal text. Works on friends' messages and calendar event titles too."),
+    h("div", { class: "row" },
+      h("button", { class: "btn primary", onclick: async () => { await api("/api/icons/print-sheet", { method: "POST" }); toast("Printing the symbol sheet"); } }, "Print the symbol cheat-sheet"),
+      h("button", { class: "btn", onclick: async () => { if (dirty) return toast("Save first.", true); await api("/api/test-print", { method: "POST", json: { template: "reminder" } }); toast("Test print queued"); } }, "Print a sample with symbols")));
+  main.append(h("div", { class: "card" }, h("h3", {}, "Your symbols"), grid));
+
+  function chip(t) { return h("span", { class: "chip" }, "[" + t.toLowerCase() + "]"); }
+  function draw() {
+    const I = CFG.icons;
+    const items = [
+      ...I.custom.map((c, i) => ({ id: c.id, name: c.name, custom: true, c, i, tags: [c.name, ...(c.tags || [])] })),
+      ...(window.__builtin || []).map(b => ({ ...b, custom: false, tags: [b.name, ...b.short, ...(I.aliases[b.id] || [])] }))];
+    grid.replaceChildren(...items.map(it => {
+      const off = !it.custom && I.disabled.includes(it.id);
+      return h("div", { class: "sym" + (off ? " off" : "") },
+        h("img", { src: it.custom ? `/uploads/${encodeURIComponent(it.c.file)}` : `/api/icon/${it.id}.png?size=110`, loading: "lazy", width: 110, height: 110, style: "object-fit:contain" }),
+        it.custom ? h("input", { type: "text", value: it.c.name, oninput: e => { it.c.name = e.target.value; markDirty(); } })
+                  : h("div", { class: "t" }, it.name),
+        h("div", { class: "chips" }, it.tags.filter(Boolean).slice(0, 6).map(chip)),
+        h("input", { type: "text", placeholder: "extra tag names, comma separated",
+          value: it.custom ? (it.c.tags || []).join(", ") : (I.aliases[it.id] || []).join(", "),
+          oninput: e => { const v = csv(e.target.value); if (it.custom) it.c.tags = v; else if (v.length) I.aliases[it.id] = v; else delete I.aliases[it.id]; markDirty(); },
+          onchange: draw }),
+        h("div", { class: "row" },
+          it.custom ? h("button", { class: "btn small danger", onclick: () => { I.custom.splice(it.i, 1); markDirty(); draw(); } }, "Delete")
+            : h("label", { class: "row small" }, h("input", { type: "checkbox", checked: !off, onchange: e => {
+                I.disabled = I.disabled.filter(x => x !== it.id); if (!e.target.checked) I.disabled.push(it.id); markDirty(); draw(); } }), "On")));
+    }));
+  }
+
+  // ---- add your own: upload or draw
+  const name = h("input", { type: "text", placeholder: "Name, e.g. Bike", maxlength: 30 });
+  const tags = h("input", { type: "text", placeholder: "extra tag names, comma separated (optional)" });
+  const mode = h("select", {}, [["line", "Line drawing (crisp black & white)"], ["photo", "Photo (greys)"]].map(([v, l]) => h("option", { value: v }, l)));
+  const file = h("input", { type: "file", accept: "image/*" });
+  const canvas = h("canvas", { width: 320, height: 320, class: "pad" });
+  const pen = h("input", { type: "range", min: 2, max: 28, value: 9 });
+  const ctx = canvas.getContext("2d");
+  const clear = () => { ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, 320, 320); inked = false; };
+  let inked = false, down = false, last = null;
+  clear();
+  const pos = e => { const r = canvas.getBoundingClientRect(); return [(e.clientX - r.left) * 320 / r.width, (e.clientY - r.top) * 320 / r.height]; };
+  canvas.addEventListener("pointerdown", e => { down = true; canvas.setPointerCapture(e.pointerId); last = pos(e); e.preventDefault();
+    ctx.fillStyle = "#000"; ctx.beginPath(); ctx.arc(last[0], last[1], pen.value / 2, 0, 7); ctx.fill(); inked = true; });
+  canvas.addEventListener("pointermove", e => { if (!down) return; const p = pos(e);
+    ctx.strokeStyle = "#000"; ctx.lineWidth = pen.value; ctx.lineCap = ctx.lineJoin = "round";
+    ctx.beginPath(); ctx.moveTo(last[0], last[1]); ctx.lineTo(p[0], p[1]); ctx.stroke(); last = p; });
+  const up = () => { down = false; };
+  canvas.addEventListener("pointerup", up); canvas.addEventListener("pointercancel", up);
+
+  async function addFromBlob(blob, defaultName) {
+    const fd = new FormData(); fd.append("file", blob, "symbol.png");
+    try {
+      const r = await api("/api/upload", { method: "POST", body: fd });
+      CFG.icons.custom.push({ id: Math.random().toString(36).slice(2, 10), name: name.value.trim() || defaultName, tags: csv(tags.value), file: r.file, mode: mode.value });
+      name.value = tags.value = ""; file.value = ""; markDirty(); draw(); toast("Added - press Save to keep it");
+    } catch (e) { toast(e.message, true); }
+  }
+  main.append(h("div", { class: "card" }, h("h3", {}, "Add your own symbol"),
+    h("div", { class: "cols two" },
+      h("div", {}, h("div", { class: "f" }, h("label", { class: "l" }, "Name"), name),
+        h("div", { class: "f" }, h("label", { class: "l" }, "Extra tag names"), tags),
+        h("div", { class: "f" }, h("label", { class: "l" }, "How to print it"), mode),
+        h("div", { class: "f" }, h("label", { class: "l" }, "Upload a picture"), file,
+          h("div", { class: "help" }, "Black-on-white drawings or logos work best.")),
+        h("button", { class: "btn", onclick: () => { if (!file.files[0]) return toast("Choose a picture first", true); addFromBlob(file.files[0], "Symbol"); } }, "Add uploaded picture")),
+      h("div", {}, h("label", { class: "l" }, "…or draw one (mouse, finger or pen)"), canvas,
+        h("div", { class: "row", style: "margin-top:6px" }, "Pen ", pen,
+          h("button", { class: "btn small", onclick: clear }, "Clear"),
+          h("button", { class: "btn primary small", onclick: () => { if (!inked) return toast("Draw something first", true);
+            canvas.toBlob(b => { addFromBlob(b, "Drawing"); clear(); }, "image/png"); } }, "Add my drawing"))))));
+
+  api("/api/icons").then(r => { window.__builtin = r.icons.filter(i => i.builtin).map(i => ({ id: i.id, name: i.name, short: i.short })); draw(); });
 }
 
 /* ---------------------------------------------------------------- account */

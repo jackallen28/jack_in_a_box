@@ -354,11 +354,32 @@ def block_footer(card: Card, tpl: dict, w: int) -> Image.Image | None:
     return text_block("\n".join(lines), "courier-prime", pt(c.get("size_pt", 8)), w, align=c.get("align", "center"))
 
 
+def block_icons(card: Card, tpl: dict, w: int) -> Image.Image | None:
+    from . import icons as icon_lib
+    c = tpl.get("icons", {})
+    if not c.get("enabled", True) or not card.icons:
+        return None
+    ids = card.icons[: int(c.get("max", 6))]
+    gap = mm(c.get("gap_mm", 3))
+    size = min(mm(c.get("size_mm", 20)), (w - gap * (len(ids) - 1)) // len(ids))
+    pics = [p for p in (icon_lib.icon_image(i, size, {"icons": card.icon_cfg}) for i in ids) if p is not None]
+    if not pics:
+        return None
+    row = Image.new("L", (sum(p.width for p in pics) + gap * (len(pics) - 1), max(p.height for p in pics)), 255)
+    x = 0
+    for p in pics:
+        row.paste(p, (x, (row.height - p.height) // 2))
+        x += p.width + gap
+    out = Image.new("L", (w, row.height), 255)
+    out.paste(row, (_x_for(c.get("align", "center"), w, row.width), 0))
+    return out
+
+
 def block_divider(card: Card, tpl: dict, w: int) -> Image.Image | None:
     return _dotted(w)
 
 
-BLOCKS = {"title": block_title, "graphic": block_graphic, "heading": block_heading,
+BLOCKS = {"title": block_title, "icons": block_icons, "graphic": block_graphic, "heading": block_heading,
           "body": block_body, "images": block_images, "footer": block_footer, "divider": block_divider}
 
 
@@ -377,8 +398,10 @@ def stack(parts: list[Image.Image], w: int, gap: int) -> Image.Image:
 
 # ------------------------------------------------------------------ card
 
-def render_card(card: Card, tpl: dict, printer_cfg: dict | None = None) -> Image.Image:
+def render_card(card: Card, tpl: dict, printer_cfg: dict | None = None, icons_cfg: dict | None = None) -> Image.Image:
     """Return a 1-bit image, ``width_dots`` wide, ready for the printer."""
+    if icons_cfg is not None:
+        card.icon_cfg = icons_cfg
     pc = printer_cfg or {}
     paper_w = int(pc.get("width_dots", 576))
     card_w = min(mm(tpl.get("width_mm", 72)), paper_w)
@@ -388,8 +411,11 @@ def render_card(card: Card, tpl: dict, printer_cfg: dict | None = None) -> Image
     gap = mm(tpl.get("gap_mm", 3))
     inner_w = card_w - 2 * (bw + pad)
 
+    order = list(tpl.get("order", []))
+    if card.icons and "icons" not in order:   # templates saved before symbols existed
+        order.insert(order.index("title") + 1 if "title" in order else 0, "icons")
     rendered = []
-    for name in tpl.get("order", []):
+    for name in order:
         fn = BLOCKS.get(name)
         if fn is None:
             continue

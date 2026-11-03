@@ -25,22 +25,24 @@ def sample_card(kind: str, now: datetime | None = None) -> Card:
     now = now or datetime.now()
     if kind == "calendar":
         return Card(kind="calendar", heading="Quarterly planning meeting", source="test", created=now,
-                    vars={"day": "TOMORROW", "date": "Wed 4 Nov", "calendar": "Work"},
+                    vars={"day": "TOMORROW", "date": "Wed 4 Nov", "calendar": "Work"}, icons=["calendar"],
                     sections=[Section("when", text="Wed 4 Nov, 10:00 AM - 11:30 AM", strong=True),
                               Section("where", text="Level 4 boardroom, 120 Collins St"),
                               Section("notes", text="Bring the budget draft and last quarter's numbers.")])
     if kind == "email":
         return Card(kind="email", heading="Q4 supplier invoice dispute", subline="From Dave Smith", source="test",
-                    created=now, vars={"date": "Mon 3 Nov"},
+                    created=now, vars={"date": "Mon 3 Nov"}, icons=["accountant"],
                     sections=[Section("summary", text="Dave says invoice 4471 for $12,480 is 20 days overdue. "
                                       "Invoice 4402 was paid twice, leaving a $3,200 credit on your account. "
                                       "He needs a reply by Friday to close the quarter."),
                               Section("actions", items=["Reply to Dave by Friday", "Check invoice 4471 against PO"])])
     secs = [Section("text", text="Wash the dishes"), Section("deadline", text="Today, 5:00 PM", strong=True)]
-    card = Card(kind="reminder", heading="Home stuff", sections=secs, source="test", created=now)
+    card = Card(kind="reminder", heading="Home stuff", sections=secs, source="test", created=now,
+                icons=["home", "exclamation"], vars={"name": "Sarah"})
     if kind == "reminder_image":
         card.sections = [Section("text", text="Ask the plumber to fix the leak under the sink before Friday."),
                          Section("deadline", text="Friday 6 Nov", strong=True)]
         card.images = [sample_image()]
         card.priority = True
+        card.icons = ["work"]
     return card

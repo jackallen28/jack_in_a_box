@@ -30,6 +30,7 @@ page at the Pi's IP address.
 | `Shopping:` followed by `- milk` `- eggs` | one printout with a checklist |
 | An email from a **friend** on your list | a `MESSAGE` printout with their name, held until you press the **button** (LED flashes while any wait) |
 | Text typed on the web page's **Print** tab | prints straight away, same cleanup as email, photos optional |
+| `[school]` / `[!]` / `[3d printer]` in the subject or text | that hand-drawn symbol prints above the heading |
 | An email with a photo | **one** printout (all the text in one box) with the photo underneath |
 | Subject line | printed as the bold heading; no subject → no heading |
 | An email **forwarded** to the printer, with your own notes typed above it | `EMAIL` printout: bold subject, a 3-5 sentence summary, and an **ACTIONS** checklist made from your notes |
@@ -149,6 +150,31 @@ Pin numbers are GPIO/BCM numbers and can be changed on the Messages tab. Default
 
 Then tick **Use a physical button + LED** and Save. *Flash the LED* tests the LED; *Press the button (from here)* does what the button does.
 The installer adds you to the `gpio` group; if the page says "GPIO not available", reboot once.
+
+## Symbols: [school], [!], [3d printer] ...
+
+Put a symbol's name in **square brackets** anywhere in an email's **subject or text** and a hand-drawn symbol prints in a row
+**above the heading** (under the `REMINDER` title; the order is changeable per template):
+
+```
+Subject:  [school] Parent forms
+Body:     [!] sign the excursion form by friday
+          pack lunch tomorrow [fun]
+```
+* **Full or short names**, any capitalisation, spaces/dashes ignored: `[School]`, `[uni]`, `[!]`, `[?]`, `[3D Printer]` = `[3dprinter]` = `[3d]`.
+  Several are fine: `[work][!]`. Up to 6 per printout (shrinks to fit).
+* **Where a tag applies:** in the **subject**, or alone on the **first line**, it goes on *every* reminder from that email. On a task's
+  own line it goes on just that task. A line holding *only* tags decorates the next task.
+* **Unknown tags** (like `[draft]` or `[1]`) are left as ordinary text and never spell-corrected.
+* Works on emails, forwarded-email summaries (tags in the subject or your own notes), friends' messages, the Print page and
+  calendar event titles/descriptions (`[school] Parent night`).
+
+24 symbols come built in, drawn in a sketchy hand-drawn style: `!` `?` work school fun holiday calendar 3d printer accountant
+bookwork home shopping money phone email birthday heart star idea health car pet clock done. **Print the cheat-sheet** from the
+**Symbols** tab to stick on the fridge.
+
+**Add your own** on the Symbols tab: upload a picture (black-on-white works best) **or draw one with the mouse / your finger**, give it a
+name and optional extra tag names, then Save. You can also add extra tag names to any built-in symbol, or switch ones you don't want off.
 
 ## How the "smart" parts work (no AI needed)
 

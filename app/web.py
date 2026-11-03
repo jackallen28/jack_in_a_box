@@ -9,6 +9,7 @@ import hashlib
 import hmac
 import io
 import logging
+import re
 import secrets
 import time
 from datetime import datetime
@@ -17,7 +18,7 @@ from flask import Flask, jsonify, request, send_file, send_from_directory, sessi
 from PIL import Image, ImageOps
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from . import plugins, schema
+from . import icons as icon_lib, plugins, schema
 from .config import APP_DIR, DATA_DIR, ROOT, KIND_DEFAULTS, ConfigStore, default_template, merge
 from .mailbox import MailPoller
 from .mailparse import Incoming, _load_image, parse
@@ -111,6 +112,41 @@ def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button) 
         cfg.replace(d)
         return jsonify(ok=True)
 
+    # ------------------------------------------------------------ symbols
+    def clean_icons(raw) -> dict:
+        raw = raw if isinstance(raw, dict) else {}
+        tags = lambda v: [str(t).strip()[:30] for t in (v if isinstance(v, list) else []) if str(t).strip()][:20]
+        custom, ids = [], set(icon_lib.BUILTIN)
+        for c in (raw.get("custom") or [])[:200]:
+            if not isinstance(c, dict) or not c.get("file") or "/" in str(c.get("file")) or ".." in str(c.get("file")):
+                continue
+            cid = re.sub(r"[^a-z0-9]", "", str(c.get("id") or "").lower())[:16] or secrets.token_hex(4)
+            if cid in ids:
+                cid = secrets.token_hex(4)
+            ids.add(cid)
+            custom.append({"id": cid, "name": str(c.get("name") or "Symbol").strip()[:30] or "Symbol", "tags": tags(c.get("tags")),
+                           "file": str(c["file"]), "mode": "photo" if c.get("mode") == "photo" else "line"})
+        aliases = {k: tags(v) for k, v in (raw.get("aliases") or {}).items() if k in icon_lib.BUILTIN and tags(v)}
+        disabled = [k for k in (raw.get("disabled") or []) if k in icon_lib.BUILTIN]
+        return {"custom": custom, "aliases": aliases, "disabled": disabled}
+
+    @app.get("/api/icons")
+    def list_icons():
+        return jsonify(icons=icon_lib.catalogue(cfg.data))
+
+    @app.get("/api/icon/<iid>.png")
+    def icon_png(iid):
+        size = max(40, min(400, int(request.args.get("size", 120))))
+        im = icon_lib.icon_image(iid, size, cfg.data)
+        if im is None:
+            return "", 404
+        return png_response(im)
+
+    @app.post("/api/icons/print-sheet")
+    def print_icon_sheet():
+        jid = svc.submit_image(icon_lib.render_sheet(cfg.data, int(cfg.data["printer"].get("width_dots", 576))), "Symbol cheat sheet")
+        return jsonify(id=jid)
+
     # ------------------------------------------------------------ config
     def public_config() -> dict:
         c = copy.deepcopy(cfg.data)
@@ -145,6 +181,7 @@ def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button) 
                                 "email": em, "bypass_queue": bool(f.get("bypass_queue")),
                                 "enabled": bool(f.get("enabled", True))})
         new["friends"] = friends
+        new["icons"] = clean_icons(new.get("icons"))
         cfg.replace(new)
         button.reconfigure()
         poller.kick.set()
@@ -268,7 +305,7 @@ def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button) 
         b = request.json or {}
         tpl = template_from(b)
         card = sample_card(b.get("sample") or tpl.get("kind", "reminder"))
-        return png_response(render_card(card, tpl, cfg.data["printer"]))
+        return png_response(render_card(card, tpl, cfg.data["printer"], cfg.data["icons"]))
 
     @app.post("/api/test-print")
     def test_print():
@@ -383,7 +420,7 @@ def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button) 
         out = []
         for c in cards:
             tpl = cfg.template(c.template or c.kind)
-            img = render_card(c, tpl, cfg.data["printer"])
+            img = render_card(c, tpl, cfg.data["printer"], cfg.data["icons"])
             buf = io.BytesIO()
             img.save(buf, "PNG")
             out.append({"kind": c.kind, "heading": c.heading, "notes": c.notes,

@@ -26,7 +26,7 @@ from datetime import date, datetime, time, timedelta
 from .config import ConfigStore
 from .models import Card, Section
 from .pipeline import local_now, local_tz
-from . import plugins, rules
+from . import icons as icon_lib, plugins, rules
 from .service import Service
 
 log = logging.getLogger("calendar")
@@ -123,7 +123,8 @@ def card_for_event(ev: dict, cfg: dict, now: datetime, template: str = "calendar
     delta = (s.date() - now.date()).days
     day = "TODAY" if delta == 0 else "TOMORROW" if delta == 1 else s.strftime("%A").upper()
     n = int(cfg["calendar"].get("notes_chars", 300))
-    notes = _strip_html(ev.get("description", ""))
+    title, t_ids = icon_lib.extract_tags(ev["summary"], cfg)          # "[school] Parent night" -> school symbol
+    notes, n_ids = icon_lib.extract_tags(_strip_html(ev.get("description", "")), cfg)
     if n and len(notes) > n:
         notes = notes[:n].rsplit(" ", 1)[0] + "..."
     secs = [Section("when", text=fmt_range(ev, cfg), strong=True)]
@@ -131,7 +132,8 @@ def card_for_event(ev: dict, cfg: dict, now: datetime, template: str = "calendar
         secs.append(Section("where", text=ev["location"].replace("\\,", ",")))
     if notes and n:
         secs.append(Section("notes", text=notes))
-    return Card(kind="calendar", heading=ev["summary"], sections=secs, template=template, source="calendar",
+    return Card(kind="calendar", heading=title, sections=secs, template=template, source="calendar",
+                icons=[*t_ids, *[i for i in n_ids if i not in t_ids]],
                 created=now, vars={"day": day, "date": f"{s.strftime('%a')} {s.day} {s.strftime('%b')}",
                                    "calendar": cal_name})
 

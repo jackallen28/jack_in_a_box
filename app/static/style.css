@@ -96,3 +96,12 @@ details > .in { padding: 4px 12px 0; }
 .lightbox img { max-width: 100%; background: #fff; }
 .badge.held { color: var(--accent); border-color: var(--accent); }
 .banner { margin: 8px 0; padding: 10px 12px; border: 2px solid var(--accent); border-radius: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-weight: 600; }
+.symgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(165px, 1fr)); gap: 12px; }
+.sym { border: 1px solid var(--line); border-radius: 10px; padding: 10px; background: var(--bg); display: grid; gap: 6px; justify-items: center; text-align: center; align-content: start; }
+.sym.off { opacity: .45; }
+.sym img { background: #fff; border: 1px solid var(--line); border-radius: 8px; }
+.sym .t { font-weight: 600; }
+.sym input[type=text] { font-size: .8rem; padding: 5px 8px; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; justify-content: center; }
+.chip { font: .72rem ui-monospace, Menlo, monospace; background: var(--card); border: 1px solid var(--line); border-radius: 99px; padding: 1px 7px; }
+.pad { width: min(320px, 100%); aspect-ratio: 1; background: #fff; border: 2px dashed var(--line); border-radius: 10px; touch-action: none; cursor: crosshair; display: block; }

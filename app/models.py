@@ -24,6 +24,8 @@ class Card:
     sections: list[Section] = field(default_factory=list)
     images: list[Image.Image] = field(default_factory=list)
     priority: bool = False
+    icons: list[str] = field(default_factory=list)   # symbol ids printed above the heading
+    icon_cfg: dict = field(default_factory=dict, repr=False)   # the "icons" config (for custom symbols)
     template: str = ""             # template name; blank = the one for ``kind``
     vars: dict = field(default_factory=dict)   # {day} {date} ... for title text
     source: str = ""               # email | calendar | api | test
