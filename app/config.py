@@ -57,6 +57,8 @@ def default_template(kind: str = "reminder") -> dict:
         "width_mm": 72,
         "min_height_mm": 80,
         "max_height_mm": 700,
+        "margin_top_mm": 0,        # blank paper ABOVE the printout (outside the border)
+        "margin_bottom_mm": 0,     # blank paper BELOW it
         "padding_mm": 4,
         "gap_mm": 3,
         "border": {"enabled": True, "width_pt": 1.0, "radius_mm": 0},

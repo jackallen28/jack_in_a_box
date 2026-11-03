@@ -435,7 +435,10 @@ def render_card(card: Card, tpl: dict, printer_cfg: dict | None = None, icons_cf
         box = [0, 0, card_w - 1, card_h - 1]
         d.rounded_rectangle(box, radius=r, outline=0, width=bw) if r else d.rectangle(box, outline=0, width=bw)
 
-    paper = Image.new("L", (paper_w, card_h), 255)
-    paper.paste(face, ((paper_w - card_w) // 2, 0))
+    # White space above/below the whole printout (outside the border). Per template; 0-60 mm.
+    mt = mm(min(60, max(0, float(tpl.get("margin_top_mm", 0) or 0))))
+    mb = mm(min(60, max(0, float(tpl.get("margin_bottom_mm", 0) or 0))))
+    paper = Image.new("L", (paper_w, mt + card_h + mb), 255)
+    paper.paste(face, ((paper_w - card_w) // 2, mt))
     thr = int(pc.get("threshold", 160))
     return paper.point(lambda p: 255 if p >= thr else 0).convert("1")

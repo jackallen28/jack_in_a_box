@@ -28,7 +28,10 @@ TEMPLATE_GROUPS = [
         F("t.width_mm", "Printout width (mm)", "number", "The TM-T82II can print at most 72 mm of its 80 mm paper.", min=30, max=72, step=1),
         F("t.min_height_mm", "Minimum height (mm)", "number", "80 gives the 80x80 mm square; it grows taller with content.", min=20, max=400, step=1),
         F("t.max_height_mm", "Maximum height (mm)", "number", min=80, max=2000, step=10),
-        F("t.padding_mm", "Padding inside border (mm)", "number", min=0, max=12, step=0.5),
+        F("t.margin_top_mm", "White space above the printout (mm)", "number",
+          "Blank paper before the border starts, e.g. 10. The printer's own paper-feed before the cut is set separately on the Printer tab.", min=0, max=60, step=1),
+        F("t.margin_bottom_mm", "White space below the printout (mm)", "number", "Blank paper after the border ends.", min=0, max=60, step=1),
+        F("t.padding_mm", "Padding inside border (mm)", "number", "Space between the border and the text.", min=0, max=12, step=0.5),
         F("t.gap_mm", "Space between sections (mm)", "number", min=0, max=12, step=0.5),
     ]},
     {"title": "Border", "fields": [

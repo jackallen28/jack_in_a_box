@@ -139,7 +139,7 @@ Useful commands: `systemctl status jack-in-a-box` · `journalctl -u jack-in-a-bo
 * **Templates** - separate looks for Reminder / Calendar / Email, with a *live preview* that is
   the exact bitmap sent to the printer. Change title text and font (Bungee, Monoton, Press Start 2P,
   Shrikhand, ...), outline / solid / shadow / reversed-bar styles, border thickness and corners,
-  section order, text size, upload a logo/graphic, footers, labels (DUE / WHEN / ACTIONS), and
+  section order, text size, **white space above and below the printout (mm)**, upload a logo/graphic, footers, labels (DUE / WHEN / ACTIONS), and
   more. *Duplicate* a template to make extra looks (e.g. one for a client).
 * **Calendar** - paste your calendar's iCal URL (Google Calendar → Settings → *Integrate calendar* →
   *Public address in iCal format*, or the *Secret address* for private calendars). Each calendar can

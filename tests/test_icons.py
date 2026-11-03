@@ -229,3 +229,45 @@ def test_saving_symbol_settings_is_sanitised(client):
     assert [x["name"] for x in out["custom"]] == ["Bike", "clash"]                # traversal path dropped
     assert out["custom"][1]["id"] != "school"                                    # can't shadow a built-in id
     assert icons.extract_tags("[cycling] [sch]", cfg.data)[1] == ["a1", "school"]
+
+
+# ---------------------------------------------------------------- top/bottom margins
+def test_margins_add_blank_paper_above_and_below_the_border():
+    from app.render import mm
+    base_tpl = tpl()
+    base = render_card(card(), base_tpl, CFG["printer"], CFG["icons"])
+    t = tpl(margin_top_mm=10, margin_bottom_mm=6)
+    out = render_card(card(), t, CFG["printer"], CFG["icons"])
+    top, bottom = mm(10), mm(6)
+    assert out.size == (576, base.size[1] + top + bottom)
+    px = out.convert("L")
+
+    def row_black(y):
+        return sum(1 for x in range(px.width) if px.getpixel((x, y)) < 128)
+
+    assert all(row_black(y) == 0 for y in range(top))                      # 10 mm of pure white above
+    assert row_black(top) > 400                                            # then the top edge of the border
+    assert all(row_black(y) == 0 for y in range(px.height - bottom, px.height))   # 6 mm of white below
+    assert row_black(px.height - bottom - 1) > 400                         # bottom edge of the border just above it
+    # the card itself is unchanged, just shifted down
+    assert out.crop((0, top, 576, top + base.size[1])).tobytes() == base.tobytes()
+
+
+def test_margins_default_to_zero_and_are_clamped():
+    from app.render import mm
+    base = render_card(card(), tpl(), CFG["printer"], CFG["icons"])
+    assert CFG["templates"]["reminder"]["margin_top_mm"] == 0 and CFG["templates"]["reminder"]["margin_bottom_mm"] == 0
+    assert render_card(card(), tpl(margin_top_mm=0, margin_bottom_mm=0), CFG["printer"], CFG["icons"]).tobytes() == base.tobytes()
+    huge = render_card(card(), tpl(margin_top_mm=500, margin_bottom_mm=-5), CFG["printer"], CFG["icons"])
+    assert huge.size[1] == base.size[1] + mm(60)                           # capped at 60 mm, negative treated as 0
+
+
+def test_margin_settings_appear_in_the_customisation_page_and_the_live_preview(client):
+    c, cfg, _ = client
+    fields = [f["path"] for g in c.get("/api/schema").json["template_groups"] for f in g["fields"]]
+    assert "t.margin_top_mm" in fields and "t.margin_bottom_mm" in fields
+    h = c.get("/api/config").json["templates"]["reminder"]
+    plain = Image.open(io.BytesIO(c.post("/api/preview", json={"tpl": h}, headers=H).data))
+    h2 = {**h, "margin_top_mm": 10}
+    with10 = Image.open(io.BytesIO(c.post("/api/preview", json={"tpl": h2}, headers=H).data))
+    assert with10.size[1] - plain.size[1] == 80                            # 10 mm = 80 dots, shown live before saving
