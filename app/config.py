@@ -111,6 +111,8 @@ def default_template(kind: str = "reminder") -> dict:
                 "notes": "NOTES",
                 "summary": "SUMMARY",
                 "actions": "ACTIONS",
+                "focus": "",
+                "full": "FULL EMAIL",
             },
         },
         "images": {
@@ -190,13 +192,17 @@ DEFAULTS: dict = {
         "backend": "extractive",  # extractive | ollama
         "sentences": 4,
         "max_actions": 10,
+        "max_full_chars": 2500,
         "show_original_sender": True,
     },
-    "llm": {
-        "enabled": False,
+    "llm": {                        # used when summary.backend = "ollama" (see README: Local AI)
         "url": "http://127.0.0.1:11434",
         "model": "qwen2.5:0.5b",
-        "timeout": 180,
+        "timeout": 240,             # seconds; a Pi 3B+ can take 1-3 minutes
+        "keep_alive": 0,            # unload the model right after each summary to free the Pi's RAM
+        "num_ctx": 2048,
+        "num_predict": 160,
+        "max_input_chars": 1600,
     },
     "calendar": {
         "enabled": True,

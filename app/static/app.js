@@ -175,6 +175,34 @@ function simple(section, title) {
         h("li", {}, "Paste the Gmail address above and the 16-letter app password. IMAP is on by default in Gmail."),
         h("li", {}, "Put your own addresses under \"Your addresses (admin)\", and add friends on the Messages tab."))));
   }
+  if (section === "text") {
+    const out = h("div", { class: "small", style: "margin-top:8px" });
+    const show = (msg, ok) => { out.textContent = msg; out.style.color = ok === undefined ? "" : ok ? "var(--ok)" : "var(--bad)"; };
+    main.append(h("div", { class: "card" }, h("h2", {}, "Local AI summaries (Raspberry Pi 3B+)"),
+      h("p", { class: "small muted" }, "Choose “Local AI” as the summary engine above and Save. The AI only rewrites a short excerpt of the email, requests and deadlines first, and its answer is thrown away (built-in summary used instead) if it mentions anything that isn't in the email. [focus] lookups and [full] never use it."),
+      h("div", { class: "row" },
+        h("button", { class: "btn", onclick: async () => {
+          show("Checking…"); const r = await api("/api/ai-status");
+          show(`${r.message}  (${r.arch}${r.mem_available_mb != null ? `, ${r.mem_available_mb} of ${r.mem_total_mb} MB RAM free` : ""})`, r.ok);
+        } }, "Check AI status"),
+        h("button", { class: "btn primary", onclick: async () => {
+          if (dirty) return toast("Save first, then test.", true);
+          const r0 = await api("/api/ai-test", { method: "POST" }); show(r0.started ? "Running a sample email through the model - this can take a few minutes on a Pi…" : "A test is already running…");
+          const t = setInterval(async () => {
+            const r = await api("/api/ai-test"); if (r.running) return; clearInterval(t);
+            const x = r.result || {};
+            show(x.used_ai ? `Worked in ${x.seconds}s:  ${x.summary.join(" ")}` : `AI not used (${x.seconds}s): ${x.reason}`, !!x.used_ai);
+          }, 3000);
+        } }, "Test AI summary")), out,
+      h("details", { style: "margin-top:12px" }, h("summary", {}, "How to set the Pi up for AI (one-off)"), h("div", { class: "in small" },
+        h("ol", {},
+          h("li", {}, "A 3B+ must run the 64-bit OS: flash “Raspberry Pi OS Lite (64-bit)” (no desktop) with Raspberry Pi Imager. Check with ", h("code", {}, "uname -m"), " = aarch64."),
+          h("li", {}, "Free up RAM (headless, no desktop/Bluetooth, compressed swap): ", h("code", {}, "bash deploy/lean-mode.sh"), " then reboot."),
+          h("li", {}, "Install Ollama and the small model: ", h("code", {}, "bash deploy/ai-setup.sh")),
+          h("li", {}, "Pick “Local AI” above, Save, then press Test AI summary.")),
+        "Prefer not to? Point “AI: Ollama address” at another computer on your network instead.")))
+    );
+  }
   if (section === "printer") {
     const res = h("div", { class: "small", style: "margin-top:8px" });
     card.append(h("div", { class: "row" },
@@ -233,7 +261,7 @@ function dashboard(main) {
 }
 function fixedNotes(raw) {
   let n = []; try { n = JSON.parse(raw || "[]"); } catch (e) { /* ignore */ }
-  return n.length ? h("div", { class: "small muted" }, "Fixed: " + n.join(", ")) : null;
+  return n.length ? h("div", { class: "small muted" }, "Notes: " + n.join(", ")) : null;
 }
 function lightbox(src) {
   const d = h("div", { class: "lightbox", onclick: () => d.remove() }, h("img", { src }));
@@ -407,7 +435,7 @@ function playground(main) {
     h("div", { class: "row", style: "margin-top:12px" }, h("button", { class: "btn primary", onclick: async () => {
       const r = await api("/api/playground", { method: "POST", json: { subject: subject.value, body: body.value, forward: fwd.checked, fwd_body: fbody.value, with_image: img.checked } });
       out.replaceChildren(...r.cards.map(c => h("div", { class: "out" }, h("img", { src: "data:image/png;base64," + c.png }),
-        c.notes.length ? h("div", { class: "small muted" }, "Fixed: " + c.notes.join(", ")) : null)));
+        c.notes.length ? h("div", { class: "small muted" }, "Notes: " + c.notes.join(", ")) : null)));
       if (!r.cards.length) out.append(h("div", { class: "muted" }, "Nothing would be printed."));
       if (r.copies > 1) out.prepend(h("div", { class: "small" }, `Rules ask for ${r.copies} copies of each.`));
     } }, "Preview")), out));

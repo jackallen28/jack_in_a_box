@@ -13,6 +13,7 @@ class Section:
     text: str = ""
     items: list[str] = field(default_factory=list)
     strong: bool = False           # drawn larger / bold (e.g. the deadline)
+    label: str = ""                # overrides the template label (e.g. your [focus] phrase)
 
 
 @dataclass

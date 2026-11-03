@@ -18,7 +18,7 @@ from flask import Flask, jsonify, request, send_file, send_from_directory, sessi
 from PIL import Image, ImageOps
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from . import icons as icon_lib, plugins, schema
+from . import icons as icon_lib, llm, plugins, schema
 from .config import APP_DIR, DATA_DIR, ROOT, KIND_DEFAULTS, ConfigStore, default_template, merge
 from .mailbox import MailPoller
 from .mailparse import Incoming, _load_image, parse
@@ -354,6 +354,20 @@ def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button) 
             return jsonify(ok=False, message=str(e)), 200
         return jsonify(ok=True, message="Checking for updates…")
 
+    @app.get("/api/ai-status")
+    def ai_status():
+        return jsonify({**llm.status(cfg.data["llm"]), "backend": cfg.data["summary"]["backend"]})
+
+    @app.post("/api/ai-test")
+    def ai_test():
+        """Run a sample email through the model in the background (a Pi can take a few minutes)."""
+        started = llm.start_test(cfg.data["llm"], int(cfg.data["summary"].get("sentences", 4)))
+        return jsonify(started=started)
+
+    @app.get("/api/ai-test")
+    def ai_test_result():
+        return jsonify(llm.test_state())
+
     @app.post("/api/test-email")
     def test_email():
         e = cfg.data["email"]
@@ -416,7 +430,7 @@ def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button) 
         inc.sender_addr = "playground"
         if b.get("with_image") and inc.forwarded is None:
             inc.images = [sample_image()]
-        cards, copies = build_cards(inc, cfg.data)
+        cards, copies = build_cards(inc, cfg.data, use_ai=False)     # preview = instant; AI runs on real emails
         out = []
         for c in cards:
             tpl = cfg.template(c.template or c.kind)

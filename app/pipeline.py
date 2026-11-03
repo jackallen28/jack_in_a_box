@@ -10,7 +10,10 @@ from . import icons as icon_lib, llm, plugins, rules
 from .dates import fmt_when
 from .mailparse import Incoming
 from .models import Card, Section
-from .summarise import summarise
+from . import emailclean
+from .focus import find_focus, parse_focus
+from .summarise import finish, prepare
+from .summarise import summarise as summarise_text
 from .textproc import _dedupe, build_items, clean_body, fix_text, pop_leading_tags, sort_items, split_blocks
 
 
@@ -54,17 +57,52 @@ def _name_only(from_header: str) -> str:
     return name or addr or ""
 
 
-def email_card(inc: Incoming, cfg: dict, now: datetime) -> Card:
+def _cap(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit].rsplit(" ", 1)[0].rstrip(",;:") + " ... (cut short)"
+
+
+def email_card(inc: Incoming, cfg: dict, now: datetime, use_ai: bool = True) -> Card:
+    """A forwarded email -> [your [focus] answers] + summary (or the full text) + your ACTIONS.
+
+    Your own notes (above the forwarded message) can contain:
+      [reply by friday] / [paper due monday]   pull the relevant sentences out of the email
+      [full]                                   print the whole message instead of a summary
+      [school] / [!]                           symbols, as everywhere else
+    Signatures, disclaimers, older replies in the chain, links and logo placeholders are removed first."""
     scfg = cfg["summary"]
     n = max(2, min(8, int(scfg.get("sentences", 4))))
-    source_text = clean_body(inc.forwarded or "", strip_quotes=False)
-    sents = llm.summarise(source_text, n, cfg["llm"]) if scfg.get("backend") == "ollama" else None
-    sents = sents or summarise(source_text, n)
+    notes_raw = clean_body(inc.body)
+    notes_raw, focus, want_full = parse_focus(notes_raw, cfg)
+
+    message = emailclean.clean_forwarded(inc.forwarded or "")
+    sentences = prepare(message)
+    sections: list[Section] = []
+    card_notes: list[str] = []
+
+    for f in focus[:6]:
+        found = [finish(x) for x in find_focus(f, sentences)]
+        sections.append(Section("focus", label=f.upper()[:40], text=" ".join(found) if found else "Not mentioned in this email."))
+
+    if want_full:
+        text = _cap(message, int(scfg.get("max_full_chars", 2500))) or "(The forwarded email had no readable text.)"
+        sections.append(Section("full", text=text))
+    else:
+        out = None
+        if scfg.get("backend") == "ollama" and use_ai and sentences:
+            ctx = f"From: {_name_only(inc.fwd_from)}\nSubject: {inc.subject or inc.fwd_subject}" if inc.fwd_from else f"Subject: {inc.subject}"
+            out, info = llm.summarise(sentences, n, cfg["llm"], ctx)
+            card_notes.append(f"AI summary ({info['seconds']}s)" if out else f"AI not used: {info['reason']}")
+        if not out:
+            out = summarise_text(message, n)
+        sections.append(Section("summary", text=" ".join(out) if out else "(The forwarded email had no readable text.)"))
+
     subject, s_ids = icon_lib.extract_tags(inc.subject, cfg)
     heading = subject or re.sub(r"^(?:fwd?|fw|re)\s*:\s*", "", inc.fwd_subject or "", flags=re.I).strip()
 
     actions: list[str] = []
-    lead_ids, above = pop_leading_tags(clean_body(inc.body), cfg)
+    lead_ids, above = pop_leading_tags(notes_raw, cfg)
     body_ids: list[str] = []
     for b in split_blocks(above, cfg["text"].get("split", True), cfg):
         body_ids += b.get("icons", [])
@@ -73,15 +111,14 @@ def email_card(inc: Incoming, cfg: dict, now: datetime) -> Card:
             if t:
                 actions.append(t)
     actions = actions[: int(scfg.get("max_actions", 10))]
+    if actions:
+        sections.append(Section("actions", items=actions))
 
     subline = ""
     if scfg.get("show_original_sender", True) and inc.fwd_from:
         subline = f"From {_name_only(inc.fwd_from)}"
-    sections = [Section("summary", text=" ".join(sents) if sents else "(The forwarded email had no readable text.)")]
-    if actions:
-        sections.append(Section("actions", items=actions))
     return Card(kind="email", heading=heading, subline=subline, sections=sections, icons=_dedupe(s_ids + lead_ids + body_ids),
-                source="email", created=now, vars={"date": now.strftime("%a %d %b")})
+                source="email", created=now, notes=card_notes, vars={"date": now.strftime("%a %d %b")})
 
 
 def reminder_cards(inc: Incoming, cfg: dict, now: datetime, split: bool | None = None) -> list[Card]:
@@ -161,10 +198,10 @@ def message_card(inc: Incoming, friend: dict, cfg: dict, now: datetime | None = 
 
 
 def build_cards(inc: Incoming, cfg: dict, now: datetime | None = None,
-                split: bool | None = None) -> tuple[list[Card], int]:
+                split: bool | None = None, use_ai: bool = True) -> tuple[list[Card], int]:
     """Return (cards, copies_each)."""
     now = now or local_now(cfg)
-    cards = [email_card(inc, cfg, now)] if inc.forwarded is not None else reminder_cards(inc, cfg, now, split)
+    cards = [email_card(inc, cfg, now, use_ai)] if inc.forwarded is not None else reminder_cards(inc, cfg, now, split)
     ctx_fields = {"sender": f"{inc.sender_name} <{inc.sender_addr}>", "subject": inc.subject,
                   "body": inc.body, "has_image": bool(inc.images), "is_forward": inc.forwarded is not None}
     res = rules.evaluate(cfg.get("rules", []), ctx_fields)

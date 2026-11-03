@@ -237,7 +237,7 @@ def _section_image(sec: Section, tpl: dict, w: int) -> Image.Image | None:
         return None
     font_id, size = b.get("font", "courier-prime"), pt(b.get("size_pt", 11))
     parts: list[Image.Image] = []
-    label = (b.get("labels") or {}).get(sec.key, "")
+    label = sec.label or (b.get("labels") or {}).get(sec.key, "")
     if b.get("show_labels", True) and label:
         parts.append(text_block(label.upper(), font_id, max(14, int(size * 0.72)), w, bold=True))
     if sec.text.strip():

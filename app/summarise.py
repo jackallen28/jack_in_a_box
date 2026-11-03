@@ -11,6 +11,7 @@ import math
 import re
 from collections import Counter
 
+from .focus import action_score
 from .textproc import _split_sentences, tidy_chars
 
 STOP = set("""
@@ -76,43 +77,53 @@ def _words(s: str) -> list[str]:
     return [w for w in re.findall(r"[a-z][a-z']+", s.lower()) if w not in STOP and len(w) > 2]
 
 
-def summarise(text: str, n: int = 4, max_chars: int = 240) -> list[str]:
-    sents = _prepare(text)
-    # drop near-duplicates (quoted replies repeat themselves)
+def prepare(text: str) -> list[str]:
+    """Clean, de-duplicated sentences of the message (for summarising and for [focus] lookups)."""
     uniq: list[str] = []
     seen: list[set] = []
-    for s in sents:
+    for s in _prepare(text):
         ws = set(_words(s))
         if any(ws and len(ws & o) / len(ws | o) > 0.7 for o in seen):
             continue
         uniq.append(s)
         seen.append(ws)
-    sents = uniq
+    return uniq
+
+
+def rank(sents: list[str]) -> list[float]:
+    """Informativeness score per sentence; requests and deadlines weigh heavily."""
+    tf = Counter(w for s in sents for w in _words(s))
+    top = max(tf.values()) if tf else 1
+    scores = []
+    for i, s in enumerate(sents):
+        ws = _words(s)
+        if not ws:
+            scores.append(0.0)
+            continue
+        base = sum(tf[w] / top for w in ws) / math.sqrt(len(ws))
+        position = 1.0 / (1 + 0.25 * i)
+        length = 0.0 if 6 <= len(s.split()) <= 35 else -0.3
+        scores.append(base + position + 0.9 * action_score(s) + length)
+    return scores
+
+
+def pick(sents: list[str], n: int, priority_first: bool = True) -> list[int]:
+    """Indexes of the n sentences to keep.  Up to two request/deadline sentences are always kept and lead."""
     if len(sents) <= n:
-        chosen = list(range(len(sents)))
-    else:
-        tf = Counter(w for s in sents for w in _words(s))
-        top = max(tf.values()) if tf else 1
-        scores = []
-        for i, s in enumerate(sents):
-            ws = _words(s)
-            if not ws:
-                scores.append(0.0)
-                continue
-            base = sum(tf[w] / top for w in ws) / math.sqrt(len(ws))   # informative, not just long
-            position = 1.0 / (1 + 0.25 * i)                           # openers matter most
-            cue = 0.25 * sum(1 for c in CUES if c in s.lower())
-            facts = 0.2 * len(re.findall(r"\$\s?\d|\d{1,2}[:/]\d{2}|\b\d{1,2}(?:st|nd|rd|th)\b|\b\d{4}\b", s))
-            question = 0.2 if s.endswith("?") else 0.0
-            length = 0.0 if 6 <= len(s.split()) <= 35 else -0.3
-            scores.append(base + position + cue + facts + question + length)
-        chosen = sorted(sorted(range(len(sents)), key=lambda i: scores[i], reverse=True)[:n])
-    out = []
-    for i in chosen:
-        s = sents[i]
-        if len(s) > max_chars:
-            s = s[:max_chars].rsplit(" ", 1)[0].rstrip(",;:") + "..."
-        if s[-1] not in ".!?\"')":
-            s += "."
-        out.append(s)
-    return out
+        return list(range(len(sents)))
+    scores = rank(sents)
+    prio = sorted((i for i in range(len(sents)) if action_score(sents[i]) >= 1.0), key=lambda i: -scores[i])[: min(2, max(1, n - 1))]
+    rest = sorted((i for i in range(len(sents)) if i not in prio), key=lambda i: -scores[i])[: n - len(prio)]
+    return sorted(prio) + sorted(rest) if priority_first else sorted(prio + rest)
+
+
+def finish(s: str, max_chars: int = 240) -> str:
+    if len(s) > max_chars:
+        s = s[:max_chars].rsplit(" ", 1)[0].rstrip(",;:") + "..."
+    return s if s[-1] in ".!?\"')" else s + "."
+
+
+def summarise(text: str, n: int = 4, max_chars: int = 240) -> list[str]:
+    """3-5 sentences, requests and deadlines first, then the rest in the order written."""
+    sents = prepare(text)
+    return [finish(sents[i], max_chars) for i in pick(sents, n)]
