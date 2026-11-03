@@ -215,7 +215,7 @@ SECTIONS = {
         F("fan.enabled", "Control a cooling fan from a GPIO pin", "bool"),
         F("fan.pin", "Fan pin (BCM/GPIO number)", "number", "To the transistor/MOSFET that switches the fan. Default 22 (physical pin 15).", min=2, max=27),
         F("fan.mode", "Mode", "select", options=opts(("auto", "Automatic (when hot, and during AI summaries)"), ("always", "Always on"), ("off", "Always off"))),
-        F("fan.on_temp", "Turn on at (°C)", "number", "A Pi 3B+ starts slowing itself down at 80°C.", min=40, max=80),
+        F("fan.on_temp", "Turn on at (°C)", "number", "A Pi 3B+ starts easing its CPU speed down from about 60°C and slows hard near 80°C. A heatsink and open air are often enough without a fan.", min=40, max=80),
         F("fan.off_temp", "Turn off below (°C)", "number", "Lower than the on temperature so the fan doesn't flick on and off.", min=30, max=75),
         F("fan.during_ai", "Also run the fan during every AI summary", "bool", "The CPU works flat out and heats quickly; this cools it before it throttles."),
         F("fan.min_on_seconds", "Run for at least (seconds)", "number", min=0, max=3600),
