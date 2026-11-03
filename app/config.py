@@ -197,6 +197,7 @@ DEFAULTS: dict = {
         "max_actions": 10,
         "max_full_chars": 2500,
         "show_original_sender": True,
+        "auto_symbols": True,     # add 1-3 symbols to a forwarded-email printout, only when clearly relevant (see app/autosymbols.py)
     },
     "llm": {                        # used when summary.backend = "ollama" (see README: Local AI)
         "url": "http://127.0.0.1:11434",
@@ -204,7 +205,7 @@ DEFAULTS: dict = {
         "timeout": 240,             # seconds; a Pi 3B+ can take 1-3 minutes
         "keep_alive": 0,            # unload the model right after each summary to free the Pi's RAM
         "num_ctx": 2048,
-        "num_predict": 220,
+        "num_predict": 260,
         "max_input_chars": 3000,    # how much of the email the AI reads (the whole thing if it fits)
         "examples": 1,              # worked examples shown before your email (0 = none; see app/summary_examples.json)
         "keep_history": True,       # keep each forwarded email's summary for review (data/ only, never uploaded)

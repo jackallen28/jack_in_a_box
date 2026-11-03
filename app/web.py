@@ -429,7 +429,7 @@ def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button, 
 
     # ------------------------------------------------------------------ AI review: history, your corrections, training data
     def _sync_examples():
-        aifeedback.write_examples(svc.db, svc.data_dir / "ai_examples.json")
+        aifeedback.write_examples(svc.db, svc.data_dir / "ai_examples.json", cfg.data)
 
     @app.get("/api/ai-runs")
     def ai_runs():
@@ -445,7 +445,11 @@ def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button, 
     @app.post("/api/ai-runs/<int:rid>/feedback")
     def ai_feedback(rid):
         b = request.json or {}
-        run = aifeedback.set_feedback(svc.db, rid, str(b.get("verdict", "")), str(b.get("corrected", "")), str(b.get("comment", "")))
+        syms = None
+        if b.get("symbols") is not None:                           # names typed on the review page; blank = none
+            from . import autosymbols
+            syms = autosymbols.resolve([x.strip() for x in re.split(r"[,;]", str(b["symbols"])) if x.strip()], cfg.data)
+        run = aifeedback.set_feedback(svc.db, rid, str(b.get("verdict", "")), str(b.get("corrected", "")), str(b.get("comment", "")), syms)
         if run is None:
             return jsonify(error="not found"), 404
         if b.get("rule") and run["comment"]:                       # "make this a standing rule"
@@ -469,7 +473,7 @@ def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button, 
 
     @app.get("/api/ai-training.jsonl")
     def ai_training():
-        body = aifeedback.export_jsonl(svc.db, llm.system_prompt(cfg.data["llm"]), llm.ask)
+        body = aifeedback.export_jsonl(svc.db, llm.system_prompt(cfg.data["llm"]), llm.ask, cfg.data)
         return Response(body, mimetype="application/x-ndjson", headers={"Content-Disposition": "attachment; filename=jack-in-a-box-ai-training.jsonl"})
 
     @app.post("/api/sheet-script")

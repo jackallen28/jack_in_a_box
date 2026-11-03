@@ -36,15 +36,21 @@ def parse_lines(text: str) -> list[str]:
     return out[:8]
 
 
+def llm_answer(bullets: list[str], symbols: list[str] | None) -> str:
+    text = "\n".join("- " + b for b in bullets)
+    return text + ("\nSYMBOLS: " + (", ".join(symbols) or "none") if symbols is not None else "")
+
+
 # ----------------------------------------------------------------------------- recording
 def record(db, trace: dict, job_id: int | None) -> int:
     cur = db.execute(
-        "INSERT INTO ai_runs(created, job_id, subject, sender, email, thread, used_ai, model, seconds, reason, bullets, printed) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO ai_runs(created, job_id, subject, sender, email, thread, used_ai, model, seconds, reason, bullets, printed, symbols) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (datetime.now().isoformat(timespec="seconds"), job_id, (trace.get("subject") or "")[:200], (trace.get("sender") or "")[:120],
          trace.get("email", "")[:8000], json.dumps(trace.get("thread", []))[:30000], 1 if trace.get("used_ai") else 0,
          trace.get("model", ""), float(trace.get("seconds") or 0), (trace.get("reason") or "")[:300],
-         json.dumps(trace.get("bullets", [])), json.dumps(trace.get("printed", {}))))
+         json.dumps(trace.get("bullets", [])), json.dumps(trace.get("printed", {})),
+         json.dumps(trace["symbols"]) if trace.get("symbols") is not None else None))
     return cur.lastrowid
 
 
@@ -63,7 +69,7 @@ def _row(r: dict, full: bool = False) -> dict:
     out = {"id": r["id"], "created": r["created"], "job_id": r["job_id"], "subject": r["subject"], "sender": r["sender"],
            "used_ai": bool(r["used_ai"]), "model": r["model"], "seconds": r["seconds"], "reason": r["reason"],
            "bullets": j("bullets", []), "printed": j("printed", {}), "status": r["status"], "comment": r["comment"] or "",
-           "corrected": j("corrected", None), "train": bool(r["train"])}
+           "corrected": j("corrected", None), "train": bool(r["train"]), "symbols": j("symbols", None)}
     if full:
         out["email"] = r["email"]
     return out
@@ -86,7 +92,7 @@ def get_run(db, rid: int) -> dict | None:
 
 
 # ----------------------------------------------------------------------------- your feedback
-def set_feedback(db, rid: int, verdict: str, corrected: str = "", comment: str = "") -> dict | None:
+def set_feedback(db, rid: int, verdict: str, corrected: str = "", comment: str = "", symbols: list[str] | None = None) -> dict | None:
     """verdict: good (the summary was right) | fix (here is the right one) | bad (wrong, no replacement) | reset."""
     run = db.one("SELECT * FROM ai_runs WHERE id=?", (rid,))
     if not run:
@@ -96,6 +102,8 @@ def set_feedback(db, rid: int, verdict: str, corrected: str = "", comment: str =
     fixed = parse_lines(corrected)
     if verdict == "fix" and (not fixed or fixed == own):
         verdict = "good" if fixed == own and own else "bad"          # nothing changed = it was fine; nothing written = no example
+    if symbols is not None:                                              # you corrected the symbols (ids; [] = none)
+        db.execute("UPDATE ai_runs SET symbols=? WHERE id=?", (json.dumps(symbols), rid))
     if verdict == "good":
         db.execute("UPDATE ai_runs SET status='good', comment=?, corrected=NULL, train=1 WHERE id=?", (comment, rid))
     elif verdict == "fix":
@@ -123,29 +131,37 @@ def clear(db, keep_reviewed: bool = True) -> int:
 
 
 # ----------------------------------------------------------------------------- feeding it back
-def training_rows(db, limit: int = 60) -> list[dict]:
-    """Reviewed summaries as {about, email, bullets}: your correction, or the AI's own answer if you marked it good."""
+def training_rows(db, limit: int = 60, cfg: dict | None = None) -> list[dict]:
+    """Reviewed summaries as {about, email, bullets, symbols}: your correction, or the AI's own answer if you marked it good.
+    ``symbols`` are symbol NAMES (as the AI writes them); only present when ``cfg`` is given and symbols were recorded."""
+    names = {}
+    if cfg is not None:
+        from . import icons as icon_lib
+        names = {c["id"]: c["name"].lower() for c in icon_lib.catalogue(cfg)}
     out = []
     for r in db.all("SELECT * FROM ai_runs WHERE train=1 AND status IN ('good','fix') ORDER BY id DESC LIMIT ?", (limit,)):
         bullets = json.loads(r["corrected"]) if r["status"] == "fix" and r["corrected"] else json.loads(r["bullets"] or "[]")
         if r["email"] and 2 <= len(bullets) <= 8:
-            out.append({"about": (r["subject"] or "your email")[:60], "email": r["email"], "bullets": bullets, "mine": True, "id": r["id"]})
+            ex = {"about": (r["subject"] or "your email")[:60], "email": r["email"], "bullets": bullets, "mine": True, "id": r["id"]}
+            if names and r.get("symbols") is not None:
+                ex["symbols"] = [names[i] for i in json.loads(r["symbols"]) if i in names]
+            out.append(ex)
     return out
 
 
-def write_examples(db, path: Path) -> int:
+def write_examples(db, path: Path, cfg: dict | None = None) -> int:
     """data/ai_examples.json - read by the AI on every summary (no database access from inside the model code)."""
-    rows = training_rows(db)
+    rows = training_rows(db, cfg=cfg)
     Path(path).write_text(json.dumps({"mine": rows}, ensure_ascii=False, indent=1), "utf-8")
     return len(rows)
 
 
-def export_jsonl(db, system: str, ask) -> str:
+def export_jsonl(db, system: str, ask, cfg: dict | None = None) -> str:
     """Chat-format fine-tuning data, one JSON object per line: system + the email + the answer you approved."""
     lines = []
-    for r in training_rows(db, limit=1000):
+    for r in training_rows(db, limit=1000, cfg=cfg):
         lines.append(json.dumps({"messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": ask(r["email"])["content"]},
-            {"role": "assistant", "content": "\n".join("- " + b for b in r["bullets"])}]}, ensure_ascii=False))
+            {"role": "assistant", "content": llm_answer(r["bullets"], r.get("symbols"))}]}, ensure_ascii=False))
     return "\n".join(lines) + ("\n" if lines else "")

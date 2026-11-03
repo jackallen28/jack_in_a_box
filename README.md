@@ -304,6 +304,21 @@ Prefer not to run it on the Pi? Set *AI: Ollama address* to another computer on 
 in seconds, and those are far better at understanding a whole email thread than the 0.5B model that fits on the Pi. Set *AI: model* to match,
 and raise *AI: worked examples shown first* to 3 or 4.
 
+### Symbols picked for you (only when it's sure)
+A forwarded-email printout gets **1 to 3 hand-drawn symbols** (Accountant, Home, Health, Holiday ...) when they clearly fit, and **none when there's any doubt**
+(*Text & sorting -> Pick 1-3 symbols for forwarded emails*). The rules, strictest first:
+* **Symbols you type always win.** If your note has `[school]` (or any symbol tag), nothing is added.
+* **The email must contain evidence.** Each symbol has a library of roughly 600 words and phrases ("blood test", "performance review", "tax invoice", "g-code",
+  "give me a call", "boarding pass" ...). One stray word is never enough: a symbol needs about two different clues (a clue in the subject counts double).
+* **With AI mode on**, the AI is also told what each symbol covers and proposes up to 3 (or `SYMBOLS: none`). *None* is final. A proposal is only accepted if the
+  email has evidence for it, so it can't invent a symbol; it can only choose between ones the email supports.
+* The abstract symbols (!, ?, star, idea, email, clock, done) are never picked automatically. At most 3, and a second or third must be nearly as well supported as the first.
+* Your own custom symbols (and any extra tag words you added to a built-in symbol on the Symbols tab) count as clues too.
+
+History notes say what was chosen ("symbols chosen: Accountant, Money") or "symbols left out" when the AI guessed something the email didn't back up. On the
+**AI review** tab you can correct the symbols for each summary, and your corrections are shown to the model as part of the worked examples.
+`python -m app.evaluate` also reports **symbols safe**: the share of the 10 test emails where nothing unacceptable was chosen.
+
 ### AI review: keep the history, correct it, feed it back
 Open the **AI review** tab. Every forwarded email the box summarises is kept there (in `data/` on the Pi only, never uploaded or committed), next to its
 printout, what the AI was shown, and what it wrote (built-in summaries are kept too, marked as such). For each one you can:

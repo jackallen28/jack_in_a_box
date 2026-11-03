@@ -50,20 +50,42 @@ USER_EXAMPLES_FILE: Path | None = None     # data/ai_examples.json - your review
 MINE_BONUS = 1.6                           # your own examples win ties over the built-in ones
 
 
-def system_prompt(cfg: dict | None = None) -> str:
-    """The instructions, plus your standing rules (max 8, kept short so a small model still follows them)."""
+SYMBOL_RULE = (" Last, on a final line, write 'SYMBOLS: ' and up to 3 symbol names from the list below that clearly fit the WHOLE email, or 'SYMBOLS: none' "
+               "if you are not certain (usually none). Never use a name that is not in the list. Symbols: ")
+
+
+def system_prompt(cfg: dict | None = None, symbol_help: list[str] | None = None) -> str:
+    """The instructions, plus the symbols it may propose (with what each one covers) and your standing rules
+    (max 8, kept short so a small model still follows them)."""
+    out = SYSTEM
+    if symbol_help:
+        out += SYMBOL_RULE + "; ".join(symbol_help) + "."
     rules = [str(r).strip()[:200] for r in (cfg or {}).get("rules", []) if str(r).strip()][:8]
-    if not rules:
-        return SYSTEM
-    return SYSTEM + " The reader's own rules, always follow them: " + " ".join(f"({i}) {r.rstrip('.')}." for i, r in enumerate(rules, 1))
+    if rules:
+        out += " The reader's own rules, always follow them: " + " ".join(f"({i}) {r.rstrip('.')}." for i, r in enumerate(rules, 1))
+    return out
 
 
 def ask(body: str) -> dict:
     return {"role": "user", "content": f"EMAIL:\n{body}\n\nBULLET POINTS:"}
 
 
-def answer_text(bullets: list[str]) -> str:
-    return "\n".join("- " + b for b in bullets)
+def answer_text(bullets: list[str], symbols: list[str] | None = None) -> str:
+    """A worked answer as the model should write it; ``symbols`` (names, [] = none) adds the final SYMBOLS line."""
+    text = "\n".join("- " + b for b in bullets)
+    if symbols is not None:
+        text += "\nSYMBOLS: " + (", ".join(symbols) if symbols else "none")
+    return text
+
+
+def split_symbols(raw: str) -> tuple[str, list[str] | None]:
+    """The model's answer -> (the bullets part, the symbol names it proposed).  None = it wrote no SYMBOLS line; [] = 'none'."""
+    m = re.search(r"(?im)^[ \t*_]*symbols?[ \t*_]*:[ \t*_]*(.*)$", raw or "")
+    if not m:
+        return raw or "", None
+    names = [x.strip(" .*_`'\"") for x in re.split(r"[,;/]|\band\b", m.group(1)) if x.strip(" .*_`'\"")]
+    names = [] if any(n.lower() in ("none", "no", "n/a", "nothing", "-") for n in names) else names
+    return (raw[:m.start()] + raw[m.end():]).strip(), names
 
 
 def load_user_examples() -> list[dict]:
@@ -188,7 +210,7 @@ def condense(sentences: list[str], limit_chars: int, owners: list[int] | None = 
 
 # --------------------------------------------------------------------------- the call
 def run(sentences: list[str], n: int, cfg: dict, context: str = "", owners: list[int] | None = None,
-        labels: list[str] | None = None) -> tuple[list[str] | None, dict]:
+        labels: list[str] | None = None, symbol_help: list[str] | None = None) -> tuple[list[str] | None, dict]:
     """Ask the model for bullet points.  Returns (bullets or None, info) - info explains what happened."""
     info: dict = {"used_ai": False, "seconds": 0.0, "reason": ""}
     if not sentences:
@@ -196,9 +218,9 @@ def run(sentences: list[str], n: int, cfg: dict, context: str = "", owners: list
         return None, info
     text = condense(sentences, int(cfg.get("max_input_chars", 3000)), owners, labels)
     head = f"{context.strip()}\n" if context.strip() else ""      # e.g. "From: Dave Smith / Subject: Invoice" (also allowed in the answer)
-    messages = [{"role": "system", "content": system_prompt(cfg)}]
+    messages = [{"role": "system", "content": system_prompt(cfg, symbol_help)}]
     for ex in pick_examples(head + text, int(cfg.get("examples", 1)), bool(cfg.get("use_my_examples", True))):      # worked examples ("training data")
-        messages += [ask(ex["email"]), {"role": "assistant", "content": answer_text(ex["bullets"])}]
+        messages += [ask(ex["email"]), {"role": "assistant", "content": answer_text(ex["bullets"], ex.get("symbols") if symbol_help else None)}]
     messages.append(ask(f"{head}{text}"))
     payload = {
         "model": cfg.get("model", "qwen2.5:0.5b"), "stream": False,
@@ -220,6 +242,7 @@ def run(sentences: list[str], n: int, cfg: dict, context: str = "", owners: list
         info["seconds"] = round(time.time() - t0, 1)
         raw = (data.get("message") or {}).get("content", "") or data.get("response", "")
         info["raw"] = raw
+        raw, info["symbols_raw"] = split_symbols(raw)                  # None = no SYMBOLS line, [] = "none"
         sents = _parse(raw, n)
         if len(sents) < 1 or sum(len(s) for s in sents) < 25:
             info["reason"] = "the model's answer was empty or too short"
@@ -238,8 +261,8 @@ def run(sentences: list[str], n: int, cfg: dict, context: str = "", owners: list
 
 
 def summarise(sentences: list[str], n: int, cfg: dict, context: str = "", owners: list[int] | None = None,
-              labels: list[str] | None = None) -> tuple[list[str] | None, dict]:
-    return run(sentences, n, cfg, context, owners, labels)
+              labels: list[str] | None = None, symbol_help: list[str] | None = None) -> tuple[list[str] | None, dict]:
+    return run(sentences, n, cfg, context, owners, labels, symbol_help)
 
 
 # --------------------------------------------------------------------------- status / test (for the settings page)

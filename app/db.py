@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS ai_runs (
     printed TEXT,                                -- JSON: {"summary": [...], "actions": [...]} as printed
     status TEXT NOT NULL DEFAULT 'new',          -- new | good | fix | bad
     comment TEXT, corrected TEXT,                -- your note, and your corrected bullets (JSON list)
-    train INTEGER NOT NULL DEFAULT 1
+    train INTEGER NOT NULL DEFAULT 1,
+    symbols TEXT                                 -- JSON list of symbol ids it chose (null = none recorded)
 );
 CREATE TABLE IF NOT EXISTS cal_events (
     key TEXT PRIMARY KEY, cal_id TEXT, start TEXT, end TEXT,
@@ -56,6 +57,8 @@ class DB:
             self.conn.executescript(SCHEMA)
             if "due" not in {r["name"] for r in self.conn.execute("PRAGMA table_info(jobs)")}:      # databases from older versions
                 self.conn.execute("ALTER TABLE jobs ADD COLUMN due TEXT")
+            if "symbols" not in {r["name"] for r in self.conn.execute("PRAGMA table_info(ai_runs)")}:
+                self.conn.execute("ALTER TABLE ai_runs ADD COLUMN symbols TEXT")
             self.conn.commit()
 
     def execute(self, sql: str, args=()) -> sqlite3.Cursor:

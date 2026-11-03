@@ -868,8 +868,11 @@ function aiReviewPage(main) {
     const box = h("textarea", { style: "min-height:120px", spellcheck: "true" }, text);
     const comment = h("input", { type: "text", placeholder: "Comment (optional): what was wrong or what you'd prefer", value: r.comment || "", style: "width:100%" });
     const rule = h("input", { type: "checkbox" });
+    const syms = h("input", { type: "text", value: (r.symbols || []).join(", "), placeholder: "none", style: "width:100%" });
     const send = async verdict => {
-      const res = await api(`/api/ai-runs/${r.id}/feedback`, { method: "POST", json: { verdict, corrected: box.value, comment: comment.value, rule: rule.checked } });
+      const body = { verdict, corrected: box.value, comment: comment.value, rule: rule.checked };
+      if (r.symbols !== null || syms.value.trim()) body.symbols = syms.value;                    // blank = no symbols
+      const res = await api(`/api/ai-runs/${r.id}/feedback`, { method: "POST", json: body });
       toast(verdict === "bad" ? "Noted" : "Saved: it will learn from this");
       if (rule.checked && !dirty) { CFG = await api("/api/config"); SAVED = JSON.parse(JSON.stringify(CFG)); drawRules(); }
       load();
@@ -887,7 +890,9 @@ function aiReviewPage(main) {
       h("details", { class: "small", style: "margin:6px 0" }, h("summary", {}, "What the AI was shown"),
         h("pre", { style: "white-space:pre-wrap;font-size:.75rem", id: `ai-in-${r.id}` }, "")),
       h("label", { class: "small" }, h("strong", {}, "Your version"), " (one bullet per line; start a line with ", h("code", {}, "ACTION:"), " for something to do)"),
-      box, h("div", { style: "margin-top:6px" }, comment),
+      box,
+      h("label", { class: "small", style: "display:block;margin-top:6px" }, h("strong", {}, "Symbols"), " it put on the printout (names, comma-separated; blank = none). It only adds one when it's sure, so ‘none’ is normal:"), syms,
+      h("div", { style: "margin-top:6px" }, comment),
       h("label", { class: "small", style: "display:block;margin:4px 0" }, rule, " make my comment a standing rule"),
       h("div", { class: "row" },
         h("button", { class: "btn small primary", onclick: () => send("good") }, "✔ It's good"),

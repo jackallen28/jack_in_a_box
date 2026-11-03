@@ -1,5 +1,5 @@
 {
-  "_about": "Training examples for the local AI. 'train' = worked examples; the closest ones that fit are shown to the model before each real email (it does not retrain the model, it shows it what a good summary looks like). 'eval' = held-out test cases for `python -m app.evaluate`, never shown to the model, so the score is honest. In a bullet, 'ACTION:' marks something the reader must do. Edit freely: add your own real emails (remove private details first). Every bullet must only use facts that are in its email. Bullets never say 'no action needed' or 'no need to reply' - the reader decides that.",
+  "_about": "Training examples for the local AI. 'train' = worked examples; the closest ones that fit are shown to the model before each real email (it does not retrain the model, it shows it what a good summary looks like). 'eval' = held-out test cases for `python -m app.evaluate`, never shown to the model, so the score is honest. In a bullet, 'ACTION:' marks something the reader must do. Edit freely: add your own real emails (remove private details first). Every bullet must only use facts that are in its email. Bullets never say 'no action needed' or 'no need to reply' - the reader decides that. 'symbols' on a training example = the symbol names the answer's final SYMBOLS line gives (none = no symbol, which is common and fine). 'symbols_ok' on an eval case = the only symbols that would be acceptable (the score counts a wrong one as a miss; none at all is always safe).",
   "train": [
     {
       "about": "overdue invoice, reply chain",
@@ -9,6 +9,10 @@
         "Jack says it was paid on Tuesday through the bank, but Dave has not received it.",
         "A late fee of $150 applies if it is not paid.",
         "ACTION: Send the remittance for invoice 4471 by Friday."
+      ],
+      "symbols": [
+        "accountant",
+        "money"
       ]
     },
     {
@@ -18,6 +22,9 @@
         "Year 9 museum excursion on Thursday 12 November; the bus leaves at 8:30am.",
         "The cost is $35. Students bring a packed lunch and wear school uniform.",
         "ACTION: Return the signed permission form and $35 to the office by Monday 9 November."
+      ],
+      "symbols": [
+        "school"
       ]
     },
     {
@@ -27,6 +34,10 @@
         "Appointment with Dr Lee, Tuesday 3 November at 2:15pm, Northside Medical, 45 High Street.",
         "Arrive 10 minutes early and bring your Medicare card.",
         "ACTION: To reschedule, call 9555 0101 at least 24 hours before."
+      ],
+      "symbols": [
+        "health",
+        "calendar"
       ]
     },
     {
@@ -35,7 +46,8 @@
       "bullets": [
         "Two new stores opened in October, in Perth and Hobart; sales are up 12% on last year.",
         "The new range launches on 1 December."
-      ]
+      ],
+      "symbols": []
     },
     {
       "about": "interview scheduling thread",
@@ -45,6 +57,9 @@
         "Jack had said any morning next week suits him.",
         "Bring photo ID.",
         "ACTION: Confirm the time with Tom by Monday."
+      ],
+      "symbols": [
+        "work"
       ]
     },
     {
@@ -54,6 +69,10 @@
         "Flight QF431 Sydney to Perth on 14 November now leaves at 9:40am (was 8:15am) and arrives at 12:05pm.",
         "Check-in opens 24 hours before departure.",
         "ACTION: Only if the new time does not suit, call 13 13 13 within 48 hours to change for free."
+      ],
+      "symbols": [
+        "holiday",
+        "calendar"
       ]
     },
     {
@@ -63,6 +82,10 @@
         "The lease at 12 Station Road ends on 31 January.",
         "A 12 month renewal would cost $520 a week, up from $495.",
         "ACTION: Sign and return the renewal agreement by Friday 20 November, or give 28 days notice to leave."
+      ],
+      "symbols": [
+        "home",
+        "money"
       ]
     },
     {
@@ -73,6 +96,10 @@
         "They could start Monday 16 November and take about 4 days.",
         "A 20% deposit ($760) books the date; the rest is due when the job is finished. The quote is valid for 14 days.",
         "ACTION: Pay the $760 deposit to book the 16 November start."
+      ],
+      "symbols": [
+        "home",
+        "money"
       ]
     },
     {
@@ -82,6 +109,9 @@
         "Amy Chen says the Melbourne supplier was chosen ($48,000; the Adelaide quote was $52,500).",
         "Melbourne can deliver by 15 January.",
         "The contract goes to legal on Thursday and Amy will send the signed copy next week."
+      ],
+      "symbols": [
+        "work"
       ]
     },
     {
@@ -91,6 +121,10 @@
         "Invitation to the Allen family 40th anniversary dinner, Saturday 28 November at 6:30pm, The Boathouse, Lake Road.",
         "Dress is smart casual; parking is limited so car pool if you can.",
         "ACTION: RSVP to Karen by Sunday 15 November and mention any dietary needs."
+      ],
+      "symbols": [
+        "fun",
+        "heart"
       ]
     }
   ],
@@ -110,7 +144,12 @@
         "50",
         "11 November"
       ],
-      "expect_action": true
+      "expect_action": true,
+      "symbols_ok": [
+        "work",
+        "shopping",
+        "money"
+      ]
     },
     {
       "name": "meeting moved",
@@ -128,7 +167,11 @@
         "Thursday",
         "Room 4"
       ],
-      "expect_action": false
+      "expect_action": false,
+      "symbols_ok": [
+        "work",
+        "calendar"
+      ]
     },
     {
       "name": "gas bill",
@@ -145,7 +188,12 @@
         "$212.40",
         "20 November"
       ],
-      "expect_action": true
+      "expect_action": true,
+      "symbols_ok": [
+        "home",
+        "money",
+        "accountant"
+      ]
     },
     {
       "name": "landlord thread",
@@ -168,7 +216,10 @@
         "10am",
         "back door"
       ],
-      "expect_action": true
+      "expect_action": true,
+      "symbols_ok": [
+        "home"
+      ]
     },
     {
       "name": "newsletter",
@@ -184,7 +235,11 @@
       "must_include": [
         "$1,850"
       ],
-      "expect_action": false
+      "expect_action": false,
+      "symbols_ok": [
+        "fun",
+        "shopping"
+      ]
     },
     {
       "name": "parcel delivery",
@@ -201,7 +256,10 @@
         "9am",
         "AB123456789"
       ],
-      "expect_action": true
+      "expect_action": true,
+      "symbols_ok": [
+        "shopping"
+      ]
     },
     {
       "name": "insurance renewal",
@@ -218,7 +276,12 @@
         "$1,240",
         "30 November"
       ],
-      "expect_action": true
+      "expect_action": true,
+      "symbols_ok": [
+        "car",
+        "money",
+        "accountant"
+      ]
     },
     {
       "name": "application outcome",
@@ -235,7 +298,10 @@
         "Technician",
         "six months"
       ],
-      "expect_action": false
+      "expect_action": false,
+      "symbols_ok": [
+        "work"
+      ]
     },
     {
       "name": "price change thread",
@@ -262,7 +328,13 @@
         "8 percent",
         "20 November"
       ],
-      "expect_action": true
+      "expect_action": true,
+      "symbols_ok": [
+        "money",
+        "work",
+        "shopping",
+        "accountant"
+      ]
     },
     {
       "name": "conference registration",
@@ -280,7 +352,14 @@
         "20 November",
         "Melbourne"
       ],
-      "expect_action": true
+      "expect_action": true,
+      "symbols_ok": [
+        "work",
+        "holiday",
+        "calendar",
+        "money",
+        "fun"
+      ]
     }
   ]
 }

@@ -25,12 +25,12 @@ import json
 import sys
 from pathlib import Path
 
-from . import llm
+from . import autosymbols, llm
 from .config import ConfigStore, DEFAULTS, merge
 from .pipeline import summarise_thread
 
 
-def score_case(case: dict, bullets: list[str], info: dict, ai: bool) -> dict:
+def score_case(case: dict, bullets: list[str], info: dict, ai: bool, symbols: list[str] | None = None) -> dict:
     text = " ".join(bullets).lower()
     facts = case.get("must_include", [])
     found = [f for f in facts if f.lower() in text]
@@ -42,6 +42,8 @@ def score_case(case: dict, bullets: list[str], info: dict, ai: bool) -> dict:
         "facts": f"{len(found)}/{len(facts)}",
         "facts_ok": len(found) == len(facts),
         "actions": has_action == bool(case.get("expect_action", False)),
+        "symbols": symbols or [],
+        "symbols_safe": all(i in case.get("symbols_ok", []) for i in (symbols or [])),
         "seconds": info.get("seconds", 0.0),
         "reason": info.get("reason", ""),
         "bullets": bullets,
@@ -56,7 +58,9 @@ def evaluate(cfg: dict, use_ai: bool = True, cases: int | None = None) -> list[d
         thread = [{"sender": m.get("sender", ""), "date": m.get("date", ""), "text": m["text"]} for m in case["messages"]]
         ctx = f"From: {case.get('from', '')}\nSubject: {case.get('subject', '')}"
         bullets, _notes, info = summarise_thread(thread, ctx, work, int(work["summary"].get("sentences", 4)), use_ai)
-        out.append(score_case(case, bullets, info, use_ai))
+        text = f"{case.get('subject', '')}\n" + " ".join(m["text"] for m in case["messages"])
+        symbols, _ai = autosymbols.pick(text, case.get("subject", ""), work, info) if work["summary"].get("auto_symbols", True) else ([], None)
+        out.append(score_case(case, bullets, info, use_ai, symbols))
     return out
 
 
@@ -108,7 +112,7 @@ def report(results: list[dict], ai: bool, show: bool = False) -> str:
     lines = []
     for r in results:
         mark = lambda ok: "yes" if ok else "NO "
-        row = f"{r['name'][:34]:34}  shape {mark(r['shape'])}  facts {r['facts']:>4}  actions {mark(r['actions'])}"
+        row = f"{r['name'][:34]:34}  shape {mark(r['shape'])}  facts {r['facts']:>4}  actions {mark(r['actions'])}  symbols {mark(r['symbols_safe'])} {','.join(r['symbols']) or '-'}"
         if ai:
             row += f"  accepted {mark(r['accepted'])}  {r['seconds']:>6}s"
         lines.append(row)
@@ -120,7 +124,7 @@ def report(results: list[dict], ai: bool, show: bool = False) -> str:
     pct = lambda k: f"{100 * sum(1 for r in results if r[k]) // n}%"
     lines.append("")
     lines.append(f"{len(results)} emails:  right shape {pct('shape')}   all key facts {pct('facts_ok')}   "
-                 f"actions right {pct('actions')}" + (f"   AI accepted {pct('accepted')}" if ai else ""))
+                 f"actions right {pct('actions')}   symbols safe {pct('symbols_safe')}" + (f"   AI accepted {pct('accepted')}" if ai else ""))
     return "\n".join(lines)
 
 

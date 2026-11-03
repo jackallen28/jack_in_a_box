@@ -11,7 +11,7 @@ from . import icons as icon_lib, llm, plugins, rules
 from .dates import fmt_when
 from .mailparse import Incoming
 from .models import Card, Section
-from . import aifeedback, emailclean
+from . import aifeedback, autosymbols, emailclean
 from .focus import detect_image_request, find_focus, parse_focus
 from .summarise import bullets as extractive_bullets
 from .summarise import finish, overview_and_actions, prepare_thread
@@ -92,7 +92,8 @@ def summarise_thread(thread: list[dict], context: str, cfg: dict, n: int, use_ai
     rest, rest_owners = [sentences[i] for i in keep], [owners[i] for i in keep]
     notes, info, out = [], {}, None
     if cfg["summary"].get("backend") == "ollama" and use_ai and rest:
-        out, info = llm.summarise(rest, n, cfg["llm"], context, rest_owners, thread_labels(thread))
+        help_ = autosymbols.describe(cfg) if cfg["summary"].get("auto_symbols", True) else None
+        out, info = llm.summarise(rest, n, cfg["llm"], context, rest_owners, thread_labels(thread), help_)
         notes.append(f"AI summary ({info['seconds']}s)" if out else f"AI not used: {info['reason']}")
     if not out and rest:
         out = extractive_bullets(rest, n, rest_owners)
@@ -177,7 +178,16 @@ def email_card(inc: Incoming, cfg: dict, now: datetime, use_ai: bool = True) -> 
     subline = ""
     if scfg.get("show_original_sender", True) and inc.fwd_from:
         subline = f"From {_name_only(inc.fwd_from)}" + (f" · {len(thread)} messages" if len(thread) > 1 else "")
-    card = Card(kind="email", heading=heading, subline=subline, sections=sections, icons=_dedupe(s_ids + lead_ids + body_ids),
+    explicit = _dedupe(s_ids + lead_ids + body_ids)                     # symbols you typed always win
+    chosen: list[str] = []
+    if not explicit and not want_full and scfg.get("auto_symbols", True) and (message or heading):
+        chosen, ai_ids = autosymbols.pick(f"{heading}\n{message}", heading, cfg, (trace or {}).get("info"))
+        if chosen:
+            names = {c["id"]: c["name"] for c in icon_lib.catalogue(cfg)}
+            card_notes.append("symbols chosen: " + ", ".join(names.get(i, i) for i in chosen))
+        elif ai_ids:
+            card_notes.append("symbols left out: the AI suggested some but the email didn't back them up")
+    card = Card(kind="email", heading=heading, subline=subline, sections=sections, icons=explicit or chosen,
                 images=images, source="email", created=now, notes=card_notes, vars={"date": now.strftime("%a %d %b")})
     if trace:                                   # kept for the AI review tab (the Service stores it once the printout is queued)
         info = trace["info"]
@@ -185,7 +195,7 @@ def email_card(inc: Incoming, cfg: dict, now: datetime, use_ai: bool = True) -> 
             "subject": heading, "sender": _name_only(inc.fwd_from or ""), "thread": [dict(m) for m in thread[:8]],
             "email": model_input(thread, trace["ctx"], cfg), "used_ai": bool(info.get("used_ai")), "reason": info.get("reason", ""),
             "seconds": info.get("seconds", 0), "model": cfg["llm"].get("model", "") if info.get("used_ai") else "built-in",
-            "bullets": aifeedback.to_lines(summary_out),
+            "bullets": aifeedback.to_lines(summary_out), "symbols": chosen,
             "printed": {"summary": next((x.items for x in sections if x.key == "summary" and x.items), []), "actions": actions}}
     return card
 

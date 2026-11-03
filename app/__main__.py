@@ -35,7 +35,7 @@ def main() -> None:
     svc = Service(cfg)
     from . import aifeedback, llm
     llm.USER_EXAMPLES_FILE = svc.data_dir / "ai_examples.json"      # your reviewed summaries (AI review tab) become worked examples
-    aifeedback.write_examples(svc.db, llm.USER_EXAMPLES_FILE)
+    aifeedback.write_examples(svc.db, llm.USER_EXAMPLES_FILE, cfg.data)
     plugins.load(cfg.data["integrations"].get("plugins_enabled", True))
     poller, cal = MailPoller(cfg, svc), CalendarSync(cfg, svc)
     svc.start()

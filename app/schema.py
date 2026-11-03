@@ -171,6 +171,7 @@ SECTIONS = {
         F("general.time_format", "Clock", "select", options=opts(("12h", "12-hour (5:00 PM)"), ("24h", "24-hour (17:00)"))),
         F("general.timezone", "Timezone", help="Blank = the Pi's timezone. e.g. Australia/Sydney"),
         F("summary.sentences", "Forwarded-email summary length (bullet points)", "number", "How many bullet points the summary has (information first, then what to do).", min=2, max=8),
+        F("summary.auto_symbols", "Pick 1-3 symbols for forwarded emails", "bool", "Only when it is clearly relevant: needs real evidence in the email (and, with AI mode on, the AI agreeing). If unsure it adds none. Symbols you type yourself always win."),
         F("summary.max_actions", "Max actions listed under a summary", "number", min=1, max=30),
         F("summary.show_original_sender", "Show who the forwarded email was from", "bool"),
         F("summary.backend", "Summary engine", "select", options=opts(
