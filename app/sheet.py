@@ -140,6 +140,12 @@ class SheetPoller(threading.Thread):
     # ------------------------------------------------------------- one pass
     def poll_once(self) -> int:
         c = self.cfg.data
+        if c["sheet"].get("treat_as", "admin") == "admin":
+            # rows an older version held for the button now print: form rows are yours, not a friend's
+            n = self.svc.db.execute("UPDATE jobs SET status='pending' WHERE status='held' AND source='form'").rowcount
+            if n:
+                log.info("Released %d form row(s) that were waiting for the button", n)
+                self.svc.wake.set()
         data = call(c, "rows")
         cols = detect_columns(data.get("headers", []))
         done = 0
@@ -173,18 +179,20 @@ class SheetPoller(threading.Thread):
         email = g("email").lower()
         kind = "message" if re.search("message", g("type"), re.I) else "reminder"
 
-        # --- who sent it?  (a verified Google address is trustworthy; a typed one is not, so the form must verify it)
+        # --- who sent it?  By default everything from YOUR form is treated as you (admin): printed straight away,
+        # never waiting for the button.  "by_sender" mode instead uses the verified email Google records.
         role, friend = classify_sender(email, c) if email else (None, None)
         policy = c["sheet"].get("unknown_policy", "hold")
         hold = False
-        if role == "friend":
-            kind = "message"
-            hold = bool(c["messages"].get("hold_for_button", True)) and not friend.get("bypass_queue", False)
-        elif role is None:
-            if policy == "ignore":
-                self._record(rid, "ignored", [], f"not on your lists ({email or 'no email'})")
-                return
-            hold = policy == "hold"
+        if c["sheet"].get("treat_as", "admin") == "by_sender":
+            if role == "friend":
+                kind = "message"
+                hold = bool(c["messages"].get("hold_for_button", True)) and not friend.get("bypass_queue", False)
+            elif role is None:
+                if policy == "ignore":
+                    self._record(rid, "ignored", [], f"not on your lists ({email or 'no email'})")
+                    return
+                hold = policy == "hold"
         name = (friend or {}).get("name") or (email.split("@")[0] if email else "Form")
 
         # --- symbols (columns "Symbol 1/2/3")

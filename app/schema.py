@@ -234,9 +234,12 @@ SECTIONS = {
         F("sheet.enabled", "Print new rows from the Google Sheet", "bool"),
         F("sheet.url", "Web app URL (from the Apps Script deployment)", help="Starts with https://script.google.com/macros/s/ and ends with /exec"),
         F("sheet.poll_seconds", "Check the sheet every (seconds)", "number", min=15, max=3600),
-        F("sheet.unknown_policy", "Rows from someone who isn't on your lists", "select", options=opts(
-            ("hold", "Hold them until I press the button"), ("print", "Print them straight away"), ("ignore", "Ignore them (leave in the sheet)")),
-          help="Turn on 'Collect email addresses: Verified' in the form so Google tells us who submitted each row. Your own address (Who can email the printer?) always prints straight away."),
+        F("sheet.treat_as", "Who are form submissions treated as?", "select", options=opts(
+            ("admin", "Me (admin): print straight away, never wait for the button"),
+            ("by_sender", "Decide by the sender's verified email (friends wait for the button)")),
+          help="Pick 'by sender' only if you share the form with other people. It needs 'Collect email addresses: Verified' in the form."),
+        F("sheet.unknown_policy", "…and rows from someone not on your lists (by-sender mode only)", "select", options=opts(
+            ("hold", "Hold them until I press the button"), ("print", "Print them straight away"), ("ignore", "Ignore them (leave in the sheet)"))),
     ],
     "updates": [
         F("updates.enabled", "Install updates automatically", "bool",

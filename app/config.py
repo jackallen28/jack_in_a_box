@@ -224,7 +224,8 @@ DEFAULTS: dict = {
         "url": "",                  # the Apps Script "Web app URL"
         "token": "",                # secret code shared with that script
         "poll_seconds": 60,
-        "unknown_policy": "hold",   # rows from someone not on your lists: hold (wait for the button) | print | ignore
+        "treat_as": "admin",        # admin: every form row is YOU - prints straight away | by_sender: use the verified email
+        "unknown_policy": "hold",   # (by_sender only) someone not on your lists: hold (wait for the button) | print | ignore
     },
     "fan": {
         "enabled": False,

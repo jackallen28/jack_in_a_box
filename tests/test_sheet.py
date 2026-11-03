@@ -108,6 +108,14 @@ def env(tmp_path, monkeypatch):
     srv.shutdown()
 
 
+def by_sender(cfg, policy=None):
+    d = cfg.data
+    d["sheet"]["treat_as"] = "by_sender"
+    if policy:
+        d["sheet"]["unknown_policy"] = policy
+    cfg.replace(d)
+
+
 def jobs(svc):
     return svc.db.all("SELECT id, kind, title, status FROM jobs ORDER BY id")
 
@@ -147,6 +155,7 @@ def test_message_type_prints_as_a_MESSAGE_slip(env):
 
 def test_a_friends_row_waits_for_the_button_and_stays_in_the_sheet_until_then(env):
     cfg, svc, poller, seen = env
+    by_sender(cfg)
     Fake.rows = [row(email="sarah@x.com", kind="Reminder", heading="Hi", body="call me")]
     poller.poll_once()
     card, hold = seen[0]
@@ -164,9 +173,7 @@ def test_a_friends_row_waits_for_the_button_and_stays_in_the_sheet_until_then(en
 @pytest.mark.parametrize("policy,expect", [("hold", "held"), ("print", "pending"), ("ignore", None)])
 def test_someone_not_on_your_lists_follows_your_policy(env, policy, expect):
     cfg, svc, poller, seen = env
-    d = cfg.data
-    d["sheet"]["unknown_policy"] = policy
-    cfg.replace(d)
+    by_sender(cfg, policy)
     Fake.rows = [row(email="stranger@z.com", heading="Hi", body="buy pills")]
     poller.poll_once()
     if expect is None:
@@ -178,6 +185,7 @@ def test_someone_not_on_your_lists_follows_your_policy(env, policy, expect):
 
 def test_a_form_that_does_not_collect_emails_uses_the_policy(env):
     cfg, svc, poller, seen = env
+    by_sender(cfg)
     Fake.headers_row = [h for h in HEADERS if h != "Email Address"]
     Fake.rows = [[v for i, v in enumerate(row(heading="Hi", body="buy milk")) if i != 1]]
     poller.poll_once()
@@ -235,6 +243,7 @@ def test_printer_off_keeps_the_row_and_never_duplicates_it(env):
 
 def test_discarded_messages_are_cleared_from_the_sheet_but_real_failures_are_kept(env):
     cfg, svc, poller, seen = env
+    by_sender(cfg)
     Fake.rows = [row(email="sarah@x.com", heading="Hi", body="one", ts="t1"), row(email="sarah@x.com", heading="Hi", body="two", ts="t2")]
     poller.poll_once()
     first, second = [j["id"] for j in jobs(svc)]
@@ -416,3 +425,34 @@ def test_chart_endpoint(tmp_path):
     assert "attachment" in c.get("/api/symbol-chart.png?download=1").headers["Content-Disposition"]
     icons_list = c.get("/api/icons").json["icons"]
     assert sorted(i["n"] for i in icons_list) == list(range(1, 25))
+
+
+# ----------------------------------------------------------------------------- the default: every form row is YOU
+def test_by_default_every_form_row_prints_straight_away_as_admin(env):
+    cfg, svc, poller, seen = env
+    assert cfg.data["sheet"]["treat_as"] == "admin"
+    Fake.rows = [row(email="sarah@x.com", kind="Reminder", heading="A", body="buy milk", ts="1"),          # a friend's address
+                 row(email="stranger@z.com", kind="Message", heading="B", body="hello there", ts="2"),     # nobody you know
+                 row(email="", kind="Message", heading="C", body="no email at all", ts="3")]
+    poller.poll_once()
+    assert [j["status"] for j in jobs(svc)] == ["pending", "pending", "pending"]               # nothing waits for the button
+    assert all(not hold for _, hold in seen)
+    assert [c.kind for c, _ in seen] == ["reminder", "message", "message"]                      # the type you chose is honoured
+    svc.process_pending()
+    assert [j["status"] for j in jobs(svc)] == ["printed"] * 3
+    poller.reap()
+    assert Fake.rows == []
+
+
+def test_rows_an_older_version_left_waiting_for_the_button_are_released_but_email_friends_are_not(env):
+    cfg, svc, poller, seen = env
+    from app.models import Card, Section
+    for src in ("form", "email"):
+        svc.submit(Card(kind="message", heading=src, sections=[Section("text", text="x")], source=src), hold=True)
+    assert [j["status"] for j in jobs(svc)] == ["held", "held"]
+    poller.poll_once()
+    assert {j["title"]: j["status"] for j in jobs(svc)} == {"form": "pending", "email": "held"}   # only the form one, only in admin mode
+    by_sender(cfg)
+    svc.db.execute("UPDATE jobs SET status='held' WHERE title='form'")
+    poller.poll_once()
+    assert {j["title"]: j["status"] for j in jobs(svc)}["form"] == "held"                          # by-sender mode leaves it alone

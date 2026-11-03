@@ -192,15 +192,17 @@ checks it every minute, **prints each new row once, then deletes the row after i
 in the sheet until it prints). Set it up on the **Google Form** tab, which has every step and a copy button for each piece. In short:
 
 1. **Make the form** with these question titles: `Message or reminder?` (dropdown *Reminder* / *Message*), `Symbol 1`, `Symbol 2`, `Symbol 3` (dropdowns; the tab gives
-   you the list of symbol names to paste), `Heading` (short answer), `Body` (paragraph), `Image` (file upload). Turn on *Collect email addresses: Verified*, and link the form to a Sheet.
+   you the list of symbol names to paste), `Heading` (short answer), `Body` (paragraph), `Image` (file upload). Link the form to a Sheet (collecting verified email addresses is optional).
 2. **Paste the script** the tab generates into the sheet (Extensions -> Apps Script), then Deploy -> Web app -> *Execute as: Me, Who has access: Anyone*.
 3. **Paste the Web app URL** into the tab, switch it on, press *Test connection*.
 
 How a row prints:
 * **Reminder** rows go through the same tidy-up as an email (spelling, split into tasks, dates become a DUE line, `[tags]` in the text work). **Message** rows print as written
   under a `MESSAGE` title. Symbol 1-3 print above the heading; a photo makes it one printout with the picture under the text.
-* **Who sent it** comes from the verified email Google records: your own address prints straight away; a friend on your list always gets a MESSAGE and waits for the button unless
-  you ticked *Skip the queue*; anyone else follows the *"someone who isn't on your lists"* setting (hold for the button / print / ignore).
+* **Everything from your form is treated as you (admin):** it prints straight away and **never waits for the button**, and the *Message or reminder?* choice is honoured.
+  If you share the form and want other people's entries handled like friends' emails instead, change *Who are form submissions treated as?* to
+  *Decide by the sender's verified email* (and turn on *Collect email addresses: Verified* in the form): your own address prints straight away, a friend always gets a MESSAGE
+  and waits for the button unless you ticked *Skip the queue*, and anyone else follows the *not on your lists* setting (hold / print / ignore).
 * A bad or empty row never blocks the ones behind it; a row that couldn't print is left in the sheet for you to see.
 
 No Google password or key is stored on the Pi: only the script's web address and a secret code that the script checks on every request. Google only lets people who are signed in
