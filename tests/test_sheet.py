@@ -399,11 +399,11 @@ def test_chart_is_a_small_picture_that_follows_your_symbols():
     cfg = normalise({})
     buf = _io.BytesIO()
     icons.render_chart(cfg).save(buf, "PNG", optimize=True)
-    assert 0 < len(buf.getvalue()) < 120_000 and Image.open(_io.BytesIO(buf.getvalue())).size == (920, 688)
+    assert 0 < len(buf.getvalue()) < 120_000 and Image.open(_io.BytesIO(buf.getvalue())).size == (920, 842)
     fewer = icons.render_chart(normalise({"icons": {"disabled": ["calendar", "heart", "star", "pet", "car", "idea"]}}))
-    assert fewer.size[1] < 688                                                              # 18 symbols = 3 rows instead of 4
-    more = icons.render_chart(normalise({"icons": {"custom": [{"id": "b1", "name": "Bike", "tags": [], "file": "x.png"}]}}))
-    assert more.size[1] > 688                                                               # 25th symbol starts a fifth row
+    assert fewer.size[1] < 842                                                              # 19 symbols = 4 rows instead of 5 (the 25 built-ins)
+    more = icons.render_chart(normalise({"icons": {"custom": [{"id": f"b{i}", "name": f"Bike{i}", "tags": [], "file": "x.png"} for i in range(6)]}}))
+    assert more.size[1] > 842                                                               # the 31st symbol starts a seventh row
 
 
 def test_a_sheet_row_can_pick_symbols_by_number_in_the_dropdown_format(env):
@@ -428,7 +428,7 @@ def test_chart_endpoint(tmp_path):
     assert r.status_code == 200 and r.data[:4] == b"\x89PNG" and "attachment" not in r.headers.get("Content-Disposition", "")
     assert "attachment" in c.get("/api/symbol-chart.png?download=1").headers["Content-Disposition"]
     icons_list = c.get("/api/icons").json["icons"]
-    assert sorted(i["n"] for i in icons_list) == list(range(1, 25))
+    assert sorted(i["n"] for i in icons_list) == list(range(1, 26))
 
 
 # ----------------------------------------------------------------------------- the default: every form row is YOU

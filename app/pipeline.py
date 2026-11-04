@@ -12,7 +12,7 @@ from . import icons as icon_lib, llm, plugins, rules
 from .dates import fmt_when
 from .mailparse import Incoming
 from .models import Card, Section
-from . import aifeedback, autosymbols, emailclean, pinkpanther
+from . import aifeedback, autosymbols, emailclean, pinkpanther, watchlist
 from .focus import detect_image_mode, find_focus, parse_focus
 from .summarise import bullets as extractive_bullets
 from .summarise import finish, overview_and_actions, prepare_thread
@@ -352,11 +352,15 @@ def build_cards(inc: Incoming, cfg: dict, now: datetime | None = None,
         cards, rest = [], inc
         if mode is None:                                              # a message about a Pink Panther episode: look it up
             cards, rest = pinkpanther.build(inc, cfg, now)
+            if rest is not None:                                      # a movie / TV show to watch: the generic WATCH LIST slip
+                watch, rest = watchlist.build(rest, cfg, now)
+                cards += watch
         if rest is not None:
             cards += reminder_cards(rest, cfg, now, split)
     if from_name and mode != "message":
         for c in cards:
-            c.stamp = f"From {from_name}"
+            if c.kind not in ("pinkpanther", "watchlist"):               # those slips carry no "From ..." sign-off
+                c.stamp = f"From {from_name}"
     ctx_fields = {"sender": f"{inc.sender_name} <{inc.sender_addr}>", "subject": inc.subject,
                   "body": inc.body, "has_image": bool(inc.images), "is_forward": inc.forwarded is not None}
     res = rules.evaluate(cfg.get("rules", []), ctx_fields)

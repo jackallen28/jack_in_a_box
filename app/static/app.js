@@ -68,7 +68,7 @@ $("#logout").addEventListener("click", async () => { await api("/api/logout", { 
 
 /* ---------------------------------------------------------------- tabs */
 const TABS = [
-  ["dashboard", "Dashboard"], ["print", "Print"], ["form", "Google Form"], ["airprint", "AirPrint"], ["shortcuts", "iPhone Shortcuts"], ["pinkpanther", "Pink Panther"], ["messages", "Messages"], ["symbols", "Symbols"], ["power", "Power & fan"], ["templates", "Templates"], ["email", "Email"], ["calendar", "Calendar"],
+  ["dashboard", "Dashboard"], ["print", "Print"], ["form", "Google Form"], ["airprint", "AirPrint"], ["shortcuts", "iPhone Shortcuts"], ["pinkpanther", "Pink Panther"], ["watchlist", "Watch list"], ["messages", "Messages"], ["symbols", "Symbols"], ["power", "Power & fan"], ["templates", "Templates"], ["email", "Email"], ["calendar", "Calendar"],
   ["text", "Text & sorting"], ["aireview", "AI review"], ["rules", "Rules"], ["printer", "Printer"], ["integrations", "Integrations"],
   ["playground", "Try it"], ["account", "Account"],
 ];
@@ -79,7 +79,7 @@ function renderTabs() {
 function go(tab) {
   TAB = tab; clearInterval(POLL); POLL = null; renderTabs();
   const main = $("#main"); main.replaceChildren();
-  ({ dashboard, print: printPage, form: formPage, airprint: airprintPage, shortcuts: shortcutsPage, pinkpanther: pinkPantherPage, aireview: aiReviewPage, messages, symbols, power: powerPage, templates, email: () => simple("email", "Email account"), calendar, text: () => simple("text", "Text, dates & summaries"),
+  ({ dashboard, print: printPage, form: formPage, airprint: airprintPage, shortcuts: shortcutsPage, pinkpanther: pinkPantherPage, watchlist: watchListPage, aireview: aiReviewPage, messages, symbols, power: powerPage, templates, email: () => simple("email", "Email account"), calendar, text: () => simple("text", "Text, dates & summaries"),
      rules, printer: () => simple("printer", "Printer"), integrations, playground, account }[tab])(main);
   window.scrollTo(0, 0);
 }
@@ -1043,6 +1043,34 @@ Text from the screenshot: `;
 }
 
 
+/* ---------------------------------------------------------------- Watch list (movies / TV shows) */
+function watchListPage(main) {
+  const status = h("div", { class: "small" }), result = h("div", { class: "small", style: "margin-top:8px;white-space:pre-wrap" });
+  const subject = h("input", { type: "text", placeholder: "Subject, e.g. Watch list", value: "Watch list" });
+  const input = h("textarea", { placeholder: "e.g.\nDune (2021)\nSeverance season 2\nwatch The Bear on Disney+", style: "min-height:90px" });
+  async function refresh() {
+    const s = await api("/api/watchlist");
+    status.replaceChildren(h("div", { style: `font-weight:600;color:${s.enabled ? "var(--ok)" : "var(--muted)"}` }, s.enabled ? "Watch list slips are ON." : "Switched off (tick the first box below, then Save)."),
+      h("div", { class: "muted" }, s.symbol ? `Symbol at the top: ${s.symbol}.` : "No symbol found with that name, so none is printed."),
+      h("div", { class: "muted" }, s.ai ? "AI mode is on: long emails are also read by the AI for titles." : "AI mode is off: titles are found by the built-in rules only."));
+  }
+  refresh();
+  const run = async print => {
+    result.textContent = "Reading it…"; result.style.color = "";
+    const r = await api("/api/watchlist-test", { method: "POST", json: { subject: subject.value, q: input.value, print } });
+    result.textContent = r.cards.length ? r.cards.map(c => `${c.heading}${c.text ? "\n" + c.text : ""}`).join("\n\n— — —\n\n") + (r.printed ? "\n\n(Sent to the printer.)" : "")
+      : "No movie or TV show found in that. Try putting “watch list” in the subject, or write it like “Dune (2021)” or “watch The Bear on Netflix”.";
+  };
+  main.append(h("div", { class: "card" }, h("h2", {}, "Watch list"),
+    h("p", { class: "small" }, "Email or message a movie or TV show you want to watch and it prints a ", h("strong", {}, "WATCH LIST"), " slip with the ", h("strong", {}, "ACTION"), " symbol at the top. Put ", h("strong", {}, "watch list"),
+      " (or movie, film, TV, series) in the subject and name the movie or show, or write things like “watch Dune (2021)” or “Severance season 2” in a message. There is one slip per title (normally one per email; if an email names several, each gets its own slip). In a long email the Pi picks out the title and ignores the rest. Pink Panther episodes keep their own slip."),
+    status));
+  main.append(h("div", { class: "card" }, h("h3", {}, "Try it"), subject, input,
+    h("div", { class: "row", style: "margin-top:6px" }, h("button", { class: "btn primary", onclick: () => run(false) }, "Read it"), h("button", { class: "btn", onclick: () => run(true) }, "Read and print")), result));
+  main.append(h("div", { class: "card" }, h("h3", {}, "Settings"), form(SCHEMA.sections.watchlist)));
+}
+
+
 /* ---------------------------------------------------------------- Pink Panther episodes */
 function pinkPantherPage(main) {
   const status = h("div", { class: "small" }), result = h("div", { class: "small", style: "margin-top:8px;white-space:pre-wrap" });
@@ -1051,29 +1079,28 @@ function pinkPantherPage(main) {
     const s = await api("/api/pinkpanther");
     status.replaceChildren(...[
       h("div", { style: `font-weight:600;color:${s.enabled ? "var(--ok)" : "var(--muted)"}` }, s.enabled ? "Pink Panther episodes are ON." : "Switched off (tick the first box below, then Save)."),
-      h("div", {}, s.cached ? `Episode list: ${s.cached} episodes kept on the Pi (downloaded ${s.fetched.replace("T", " ")}).` : "Episode list: not downloaded yet. It is fetched the first time a message needs it, or press “Refresh” below."),
-      s.last_problem ? h("div", { style: "color:var(--warn)" }, "⚠ Last lookup problem: " + s.last_problem) : null,
-      ...(s.problems || []).map(p => h("div", { style: "color:var(--warn)" }, "⚠ " + p))].filter(Boolean));
+      h("div", {}, `Episode list (built in): ${s.titles} shorts across ${s.seasons} seasons and ${s.tv_episodes} TV episodes, from the Pink Panther Wiki guide.`),
+      h("div", { class: "muted" }, s.learned ? `Plots and dates already looked up and kept: ${s.learned}.` : "No plots looked up yet: each is fetched the first time an episode is sent, then kept."),
+      s.last_problem ? h("div", { style: "color:var(--warn)" }, "⚠ Last online lookup problem: " + s.last_problem + " (the slip still prints, without the plot).") : null].filter(Boolean));
   }
   refresh(); POLL = setInterval(() => refresh().catch(() => {}), 8000);
   const run = async print => {
     result.textContent = "Looking it up…"; result.style.color = "";
     const r = await api("/api/pinkpanther-test", { method: "POST", json: { q: input.value, print } });
-    result.textContent = r.cards.length ? r.cards.map(c => `${c.heading}\n${c.text}`).join("\n\n— — —\n\n") + (r.printed ? "\n\n(Sent to the printer.)" : "")
-      : "That wouldn't be treated as a Pink Panther episode (it needs to mention an episode or a title I can match).";
-    result.style.color = ""; refresh();
+    result.textContent = r.cards.length ? r.cards.map(c => `${c.heading}${c.found ? "" : "  (not in the list: printed as you wrote it)"}\n${c.text}`).join("\n\n— — —\n\n") + (r.printed ? "\n\n(Sent to the printer.)" : "")
+      : "That wouldn't be treated as a Pink Panther message (it needs an episode title I can match, or “Pink Panther” in the subject).";
+    refresh();
   };
   main.append(h("div", { class: "card" }, h("h2", {}, "Pink Panther episodes"),
-    h("p", { class: "small" }, "Note the episodes you want to watch and send them to the printer as a message or email (subject “Pink Panther”, one episode per line). Each one prints as a ",
-      h("strong", {}, "PINK PANTHER"), " slip with your hand-drawn picture, the episode's real name, and whatever the Pi can find on the internet: release date, episode number, series, volume, director and so on. Anything it can't find is simply left off."),
-    h("p", { class: "small" }, "It only names an episode when it's ", h("strong", {}, "confident"), " the match is right, using what you wrote and the rest of the message (a year, a director, a volume). If it isn't sure, the slip shows what you wrote and “Did you mean …” instead of guessing."),
+    h("p", { class: "small" }, "Note the episodes you want to watch and send them to the printer: subject ", h("strong", {}, "Pink Panther"), ", then the episode names in the message (one per line, or woven into a longer email: the Pi reads the body for episode titles and ignores signatures and quoted replies). Each one prints as a ",
+      h("strong", {}, "PINK PANTHER"), " slip with your hand-drawn picture, the real title, the season, the date, the episode number and a short spoiler-free plot overview."),
+    h("p", { class: "small" }, "It only names an episode when it's ", h("strong", {}, "confident"), " the match is right (using what you wrote and the rest of the message, such as a year or season). A name that isn't in the list is printed exactly as you wrote it."),
     status));
   main.append(h("div", { class: "card" }, h("h3", {}, "Try it"),
     h("div", { class: "small muted" }, "Type what you'd put in a message. This is how the Pi will read it."), input,
     h("div", { class: "row", style: "margin-top:6px" },
       h("button", { class: "btn primary", onclick: () => run(false) }, "Look it up"),
-      h("button", { class: "btn", onclick: () => run(true) }, "Look up and print"),
-      h("button", { class: "btn small", onclick: async () => { result.textContent = "Downloading the episode list…"; const r = await api("/api/pinkpanther-refresh", { method: "POST" }); result.textContent = r.message; result.style.color = r.ok ? "var(--ok)" : "var(--bad)"; refresh(); } }, "Refresh the episode list now")),
+      h("button", { class: "btn", onclick: () => run(true) }, "Look up and print")),
     result));
   main.append(h("div", { class: "card" }, h("h3", {}, "Settings"), form(SCHEMA.sections.pinkpanther)));
 }

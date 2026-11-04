@@ -243,8 +243,8 @@ Body:     [!] sign the excursion form by friday
 * Works on emails, forwarded-email summaries (tags in the subject or your own notes), friends' messages, the Print page and
   calendar event titles/descriptions (`[school] Parent night`).
 
-24 symbols come built in, drawn in a sketchy hand-drawn style: `!` `?` work school fun holiday calendar 3d printer accountant
-bookwork home shopping money phone email birthday heart star idea health car pet clock done. **Print the cheat-sheet** from the
+25 symbols come built in, drawn in a sketchy hand-drawn style: `!` `?` work school fun holiday calendar 3d printer accountant
+bookwork home shopping money phone email birthday heart star idea health car pet clock done, and `action` (a clapperboard, used by the Watch list). **Print the cheat-sheet** from the
 **Symbols** tab to stick on the fridge.
 
 **Add your own** on the Symbols tab: upload a picture (black-on-white works best) **or draw one with the mouse / your finger**, give it a
@@ -452,23 +452,56 @@ The HTTP print API (`POST /api/print` with a token, Integrations tab; it also ac
 
 ## Pink Panther episodes
 
-Note the episodes you want to watch and send them as a message or email: subject **Pink Panther**, one episode per line (or one email each). Each one prints as a **PINK PANTHER** slip: the
-outlined title, **your hand-drawn Pink Panther** (prepared for thermal paper: crisp outline and whiskers with a light shaded fill, or clean outline only: *Picture style*), the episode's **real name**, and
-whatever the Pi can find on the internet: release date, episode number, series, volume, director, writer, length and a one-line summary. Anything not found is simply left off. There is no source line.
+Note the episodes you want to watch and email or message them through. Put **Pink Panther** in the subject and the Pi reads the body for the episodes, even if the email is long and chatty
+(greetings, sign-offs, signatures, disclaimers and quoted replies are ignored). Each episode prints as a short **PINK PANTHER** slip: the title at the top, **your hand-drawn Pink Panther**
+(prepared for thermal paper: crisp outline with a light shaded fill, or clean outline only: *Picture style*), then just:
 
-* **It only names an episode when it's confident.** Your words are matched loosely (capitals, a missing "The", a typo: "pink phnik" finds *The Pink Phink*, and the slip adds a small "YOU WROTE" line when what you
-  typed differed), and the rest of the message helps: a year, a director, a volume or season number, or a detail from the episode's notes can tip a close call (never create a match on its own). If two
-  episodes are equally likely, or nothing fits, it does **not** guess: the slip shows what you wrote and, when there are near misses, "Did you mean ...". Put the year in ("Pink Alerts 1977") to settle a tie.
-* **What counts as a Pink Panther message:** "Pink Panther" in the subject, or a line that mentions it and sounds like an episode ("watch Pink Panther ..."). A passing mention ("buy a pink panther toy for
-  Sam") is left alone and prints as a normal reminder, unless it matches an episode title. Symbol tags like `[fun]` still work. Up to 8 episodes per message (adjustable).
-* **Where the facts come from:** Wikipedia's public API (needs the Pi's internet). The episode tables of *List of The Pink Panther cartoons* are downloaded once and kept on the Pi (`data/pinkpanther.json`, refreshed
-  every 30 days), then the episode's own article adds director, length and the summary when it has one. Columns are recognised by their header (Title, Release date, No., Directed by, Written by, **Volume**,
-  Season/Series, Notes ...), so a table with other or extra columns still works. **Volume appears only if a source table has a volume column.** If you know a list that has the DVD/Blu-ray volumes, add its Wikipedia page
-  title under *Wikipedia pages with episode lists* and it is picked up automatically.
-* **Offline or lookup off:** with a kept list it still works with no internet; with none, or with *Search the internet* off, the slip prints the picture and what you wrote, and says it couldn't look it up.
-* **The Pink Panther tab** shows the state of the list, has a *Try it* box that shows exactly what the Pi found for what you type (with *Look up and print*), and a *Refresh the episode list now* button that says plainly why
-  it failed if it does. **I built and tested this against a fake Wikipedia shaped like the real pages, because my build environment couldn't reach Wikipedia**, so please press *Refresh the episode list now* on the Pi first
-  and tell me what it says (or what the first lookup shows) if anything looks off: Wikipedia's tables can differ from what I expected.
+```
+SEASON: 1 - The Pink Panther Show
+DATE:   December 18, 1964
+EPISODE: 11
+ALSO:   S2 #17
+PLOT:   2-4 spoiler-free sentences about the set-up
+```
+
+* **The episode list is built in.** It comes from the Pink Panther Wiki guide to *The Pink Panther Show* (5 seasons, 98 TV episodes, 216 shorts; `app/pinkpanther_episodes.json`), so the title, season and
+  episode number work with no internet. If you send an updated guide as a PDF, `python tools/pinkpanther_from_pdf.py guide.pdf` regenerates the list.
+* **Only confident matches are used.** Typos and partial titles are fine ("pink phnik" finds *The Pink Phink*), but a vague word like "pink" matches nothing. A year or "season 2" in your message settles a
+  close call between two titles. A passing mention ("buy a pink panther toy") stays a normal reminder.
+* **If the name isn't in the list**, the slip just shows the name as you wrote it (best guess), with no invented details.
+* **DATE** is the exact release date when the Pi can look it up, otherwise the years the season aired, e.g. `1969-1970 (TV)`. **ALSO** lists a few other seasons the short was shown in. The label says
+  SEASON because that is what the guide calls them; tell me if you'd rather it said VOLUME.
+* **PLOT, DATE and the exact release date need the internet** (the Pi reads the episode's page on the Pink Panther Fandom wiki, then Wikipedia). Pages are kept in `data/pinkpanther.json`. With AI mode on
+  (*Summary mode: local AI*) the plot is written by the local model from the page text, in 2-4 plain sentences with no ending or twist, and checked so it can't invent names or numbers. With AI off, or if the
+  model is unavailable, the first few sentences of the page's plot are used instead. If the lookup fails you still get the title, season and episode.
+* **Not tested against the live wikis yet:** the sandbox this was built in can't reach Fandom or Wikipedia, so reading those pages is covered by tests using sample pages. If a plot or date doesn't show up on
+  your Pi, the **Pink Panther** tab shows why.
+* **Settings** (the *Pink Panther* tab): on/off, look up online details, AI plot overview, how many AI overviews per message, show the picture, picture style, and the most episodes printed per message. The tab
+  also has a *Try it* box showing exactly what the Pi found for what you type, with *Look up and print*.
+
+## Watch list: movies and TV shows
+
+Email or message a movie or TV show you want to watch (usually one per email) and it prints a **WATCH LIST** slip with the **ACTION** symbol (a clapperboard) under the title. These slips are generic: the same title and
+symbol every time. Only Pink Panther episodes keep their own slip (they get first pick of a message).
+
+```
+subject: Watch list
+Dune (2021)
+```
+
+prints **one slip per title** (normally an email names just one; if it names several, each gets its own slip, up to *Most slips from one message*). A slip is the title as a heading with `TYPE`, `SEASON`,
+`YEAR` and `ON` lines under it, only the ones your message gave: `Dune` / `YEAR: 2021`, `Severance` / `TYPE: TV SHOW` / `SEASON: 2`, `The Bear` / `ON: Disney+`. Nothing is looked up or invented: the type, year and service come from the same line you wrote.
+
+* **How it decides a message is about something to watch.** *Watch list*, *to watch*, *watch next* in the subject (or as a header line) means every short line is a title. *Movie, film, TV, series, show,
+  Netflix ...* in the subject means quoted names, `Title (2021)`, `watch Title` and short Title-Cased lines are titles. With nothing in the subject only a line that clearly names something counts: a
+  quoted name, `Title (2021)`, `Title season 2`, `watch the movie Title`, `watch Title on Netflix`. "watch Dave play", "buy popcorn" and "movie night" stay normal reminders, and a clear line mixed into an
+  ordinary message is taken while the rest still prints as a reminder.
+* **Long, chatty emails** are cleaned first (signature, disclaimers, quoted replies, "Hi Jack," and "Thanks, Sam") and read for titles in the sentences. Separate titles with commas or new lines;
+  "Dune and Barbie" in one sentence is kept as a single title because films like *Pride and Prejudice* exist. With AI mode on, the local AI also picks the titles out of a long email, and a title is only
+  kept if it appears in your text.
+* **The symbol** is set under *Watch list* (default `action`). The built-in clapperboard is numbered after the 24 originals and your own symbols (so your own symbols' numbers never moved); if you draw your own symbol called "action" it is used instead.
+  Symbol tags such as `[fun]` are added after it. There is no "From ..." sign-off on these slips or on Pink Panther slips.
+* **Look** (title text, symbol size, order, fonts) is the *Watch list* template on the Templates page. The *Watch list* tab has a *Try it* box showing exactly what the Pi finds, with *Read and print*.
 
 ## Power, cooling and the email mailbox
 

@@ -260,6 +260,34 @@ def run(sentences: list[str], n: int, cfg: dict, context: str = "", owners: list
     return None, info
 
 
+def generate(system: str, user: str, cfg: dict, num_predict: int = 220) -> tuple[str | None, dict]:
+    """One plain question to the local model (not an email summary).  Returns (its answer or None, info).  Any failure -> None."""
+    info: dict = {"used_ai": False, "seconds": 0.0, "reason": ""}
+    payload = {"model": cfg.get("model", "qwen2.5:0.5b"), "stream": False, "keep_alive": cfg.get("keep_alive", 0),
+               "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+               "options": {"temperature": 0.2, "num_ctx": int(cfg.get("num_ctx", 2048)), "num_predict": num_predict, "num_thread": 4}}
+    t0 = time.time()
+    _busy_add(1)
+    try:
+        with _LOCK:
+            data = _post(cfg, "/api/chat", payload, float(cfg.get("timeout", 240)))
+    except urllib.error.HTTPError as e:
+        info["reason"] = "model not installed - run: ollama pull " + payload["model"] if e.code == 404 else f"Ollama error {e.code}"
+    except Exception as e:
+        info["reason"] = f"Ollama not reachable or too slow ({type(e).__name__})"
+    else:
+        info["seconds"] = round(time.time() - t0, 1)
+        out = ((data.get("message") or {}).get("content", "") or data.get("response", "")).strip()
+        if out:
+            info["used_ai"] = True
+            return out, info
+        info["reason"] = "the model's answer was empty"
+    finally:
+        _busy_add(-1)
+    info["seconds"] = info["seconds"] or round(time.time() - t0, 1)
+    return None, info
+
+
 def summarise(sentences: list[str], n: int, cfg: dict, context: str = "", owners: list[int] | None = None,
               labels: list[str] | None = None, symbol_help: list[str] | None = None) -> tuple[list[str] | None, dict]:
     return run(sentences, n, cfg, context, owners, labels, symbol_help)

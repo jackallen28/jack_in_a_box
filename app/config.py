@@ -18,7 +18,7 @@ APP_DIR = Path(__file__).resolve().parent
 ROOT = APP_DIR.parent
 DATA_DIR = Path(os.environ.get("JACK_IN_A_BOX_DATA", ROOT / "data"))
 
-BUILTIN_TEMPLATES = ("reminder", "calendar", "email", "message", "pinkpanther")
+BUILTIN_TEMPLATES = ("reminder", "calendar", "email", "message", "pinkpanther", "watchlist")
 
 KIND_DEFAULTS = {
     "reminder": {
@@ -44,6 +44,12 @@ KIND_DEFAULTS = {
         "title": "PINK PANTHER",
         "subtitle": "",
         "order": ["title", "graphic", "heading", "body", "footer"],
+    },
+    "watchlist": {
+        "label": "Watch list (movies and TV shows)",
+        "title": "WATCH LIST",
+        "subtitle": "",
+        "order": ["title", "icons", "heading", "body", "footer"],
     },
     "email": {
         "label": "Email summary",
@@ -244,13 +250,20 @@ DEFAULTS: dict = {
     # Messages about the Pink Panther: look the episode up on Wikipedia and print its real name, date, director ... (app/pinkpanther.py)
     "pinkpanther": {
         "enabled": True,
-        "lookup": True,             # search the internet (Wikipedia) for the episode; off = print what you wrote under the picture
-        "details": True,            # also read the episode's own Wikipedia article (director, running time, a summary line)
+        "lookup": True,             # search the internet for the plot and an exact release date; off = only the season/episode from the built-in list
+        "details": True,            # read the episode's own page (Pink Panther Wiki, then Wikipedia) for its plot text and release date
+        "ai_plot": True,            # with AI mode on, the local AI writes the 2-4 sentence spoiler-free plot overview (else the opening of the plot text)
+        "max_ai_plots": 3,          # at most this many AI overviews per message (each takes a minute or two on a Pi); the rest use the opening of the plot
         "show_image": True,         # the hand-drawn Pink Panther picture at the top
         "style": "shaded",          # shaded (outline + light stipple fill) | outline (clean line art)
         "max_episodes": 8,          # at most this many episodes from one message
-        "cache_days": 30,           # how long to keep the downloaded episode list before checking again
-        "pages": ["List of The Pink Panther cartoons"],   # Wikipedia pages with episode tables (add more if you know a list that has volumes)
+    },
+    # Messages about a movie or TV show to watch: a WATCH LIST slip with the ACTION symbol (app/watchlist.py)
+    "watchlist": {
+        "enabled": True,
+        "symbol": "action",         # the symbol at the top: a name or tag from the Symbols page (your own "action" symbol wins over the built-in clapperboard)
+        "ai": True,                 # with AI mode on, the local AI also picks the titles out of a long, chatty email (each title must appear in the text)
+        "max_titles": 5,            # at most this many titles (a slip each) from one message
     },
     # Share the receipt printer on your network as an AirPrint / IPP Everywhere printer (see app/airprint.py)
     "airprint": {

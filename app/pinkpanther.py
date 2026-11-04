@@ -1,19 +1,20 @@
-"""Pink Panther episodes: you note one in a message, the box looks it up and prints its real name, date, director ...
+"""Pink Panther episodes: you note one in a message, the box prints a PINK PANTHER slip with its season, episode, date and plot.
 
-HOW IT WORKS
-  * A message about the Pink Panther ("Pink Panther" in the subject, or a line that mentions it and sounds like an episode) is
-    turned into PINK PANTHER slips: the hand-drawn picture, the episode's real title, and whatever facts could be found.
-  * The facts come from Wikipedia (its public API, over the internet): the list page's tables give title, release date, number,
-    directors, volume/season/series columns and notes - whichever columns the table has; then the episode's own article adds
-    director, running time and a one-line summary when there is one.  Anything not found is simply left off.
-  * The episode list is downloaded once and kept in data/pinkpanther.json (refreshed after ``cache_days``), so later lookups are
-    instant and work offline.  No internet and no list yet?  The slip still prints, with what you wrote.
-  * Your words are matched loosely ("pink fink", "the pink phink", lower case, a missing "The"): a clear best match is used; a
-    doubtful one is shown as "Did you mean ...".
-  * One message can hold several episodes, one per line.
+WHERE THE FACTS COME FROM
+  * The episode list is built in (app/pinkpanther_episodes.json, made from the Pink Panther Wiki's "The Pink Panther Show" guide by
+    tools/pinkpanther_from_pdf.py): every short, and which season and episode number of the TV show it was in (the same short is often
+    repeated in later seasons).  So recognising an episode, its season and its number need no internet.
+  * The internet (Wikipedia/Fandom, only if "lookup" is on) adds what the list doesn't have: the plot text and an exact release date.
+    The plot is turned into a 2-4 sentence, spoiler-free overview by the local AI when AI mode is on (checked so it can't make things
+    up), otherwise it is the opening of the plot text.  Anything not found is simply left off.
 
-Nothing here talks to the internet unless ``pinkpanther.lookup`` is on.  Everything that does goes through ``fetch_json``, which
-the tests replace.
+HOW A MESSAGE IS READ
+  * "Pink Panther" in the subject says what the message is about; the body, however long, is then read for the episodes in it: exact
+    titles anywhere in the text, quoted titles, and short title-like lines (matched loosely).  Signatures, disclaimers and quoted
+    replies are ignored first.
+  * An episode is only stated as fact when the match is CONFIDENT (a clear best match, helped by a year or season in the message).
+    Otherwise the slip just shows the name as you wrote it: your best guess is your own words, never a wrong episode.
+  * "Pink Panther" mentioned in passing ("buy a pink panther toy") is left alone unless it names an episode.
 """
 from __future__ import annotations
 
@@ -22,33 +23,34 @@ import json
 import logging
 import re
 import threading
-import time
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass, field, replace
+from dataclasses import replace
 from datetime import datetime
+from functools import lru_cache
 from html.parser import HTMLParser
 from pathlib import Path
 
 from . import icons as icon_lib
-from .config import DATA_DIR
+from .config import APP_DIR, DATA_DIR
 from .models import Card, Section
 
 log = logging.getLogger("pinkpanther")
 
-API = "https://en.wikipedia.org/w/api.php"
+BUNDLED = APP_DIR / "pinkpanther_episodes.json"
+CACHE_FILE = DATA_DIR / "pinkpanther.json"          # what was learned online (plots, dates), kept so it is looked up once
+FANDOM_API = "https://pinkpanther.fandom.com/api.php"
+WIKIPEDIA_API = "https://en.wikipedia.org/w/api.php"
 USER_AGENT = "JackInABox/1.0 (personal receipt-printer project; episode lookup)"
-CACHE_FILE = DATA_DIR / "pinkpanther.json"
 MENTION = re.compile(r"pink[\s\-]*panther", re.I)
 CONTEXT_WORDS = re.compile(r"\b(episodes?|cartoons?|shorts?|shows?|season|series|volume|vol|watch|ep)\b", re.I)
 ACCEPT, CLEAR_LEAD = 0.62, 0.05
-OFFLINE_RETRY_SECONDS = 300
 _lock = threading.RLock()
-_last_failure = 0.0
+LAST_PROBLEM = ""                                   # why the last online lookup failed (for the settings page)
 
 
 class LookupError_(Exception):
-    """Something stopped the lookup (no internet, Wikipedia changed ...).  The message is for the person."""
+    """An online lookup failed; the message is for the person."""
 
 
 def fetch_json(url: str, timeout: float = 12) -> dict:
@@ -61,28 +63,44 @@ def fetch_json(url: str, timeout: float = 12) -> dict:
 FETCH = fetch_json
 
 
-# =========================================================================== reading Wikipedia's HTML tables
+# =========================================================================== the built-in episode list
+@lru_cache(maxsize=1)
+def _bundled() -> dict:
+    try:
+        return json.loads(BUNDLED.read_text("utf-8"))
+    except (OSError, ValueError):
+        return {"seasons": [], "shorts": []}
+
+
+def load_episodes() -> list[dict]:
+    """Every short: {title, appearances: [{season, show, years, network, episode}], years}.  First showing first."""
+    out = []
+    for e in _bundled().get("shorts", []):
+        years = " ".join(dict.fromkeys(a["years"] for a in e["appearances"]))
+        out.append({**e, "years": years})
+    return out
+
+
+# =========================================================================== reading a web page (plot text, release date)
 class _Page(HTMLParser):
-    """Collects the wikitables (with their section headings) and, outside tables, the infobox and the first paragraphs."""
-    SKIP_CLASSES = ("reference", "mw-editsection", "sortkey", "noprint", "navbar", "hatnote", "mw-cite-backlink", "reflist")
+    """The paragraphs (with the section heading each sits under) and the infobox facts of an article, from Fandom or Wikipedia HTML."""
+    SKIP_CLASSES = ("reference", "mw-editsection", "sortkey", "noprint", "navbar", "hatnote", "mw-cite-backlink", "reflist", "toc")
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
-        self.tables: list[dict] = []
         self.section = ""
-        self.paragraphs: list[str] = []
-        self._skip: list[str] = []                    # tag names being skipped (nesting)
-        self._tab: dict | None = None
-        self._tab_depth = 0
-        self._row: list[dict] | None = None
-        self._cell: dict | None = None
+        self.para_info: list[tuple[str, str]] = []
+        self.infobox: dict[str, str] = {}
+        self.tables: list[list[list[tuple[bool, str]]]] = []     # infobox tables (Wikipedia): rows of (is_header, text)
+        self._skip: list[str] = []
         self._head: list[str] | None = None
         self._para: list[str] | None = None
-        self._kind = ""                               # "wikitable" | "infobox"
-
-    # -- helpers
-    def _skipping(self) -> bool:
-        return bool(self._skip)
+        self._pi: list | None = None                     # [kind, tag, depth, text parts]  (Fandom's "portable infobox")
+        self._pi_label = ""
+        self._tab: list | None = None
+        self._tab_depth = 0
+        self._row: list | None = None
+        self._cell: list | None = None
 
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
@@ -92,35 +110,36 @@ class _Page(HTMLParser):
             if tag == self._skip[0]:
                 self._skip.append(tag)
             return
-        if tag in ("style", "script") or "display:none" in style or any(c in cls.split() or c in cls for c in self.SKIP_CLASSES) and tag in ("span", "sup", "div", "style", "a", "table"):
+        if tag in ("style", "script") or "display:none" in style or (any(c in cls for c in self.SKIP_CLASSES) and tag in ("span", "sup", "div", "style", "a", "table", "ul")):
             if tag not in ("br", "img", "hr"):
                 self._skip = [tag]
+            return
+        if self._pi is not None:
+            if tag == self._pi[1]:
+                self._pi[2] += 1
+            elif tag in ("br", "li"):
+                self._pi[3].append(", ")
+            return
+        if "pi-data-label" in cls or "pi-data-value" in cls:
+            self._pi = ["label" if "pi-data-label" in cls else "value", tag, 1, []]
             return
         if tag == "table":
             if self._tab is not None:
                 self._tab_depth += 1
-                return
-            kind = "wikitable" if "wikitable" in cls else "infobox" if "infobox" in cls else ""
-            if kind:
-                self._tab, self._tab_depth, self._kind = {"section": self.section, "rows": [], "kind": kind}, 1, kind
-            return
-        if tag in ("h2", "h3", "h4") and self._tab is None:
-            self._head = []
+            elif "infobox" in cls:
+                self._tab, self._tab_depth = [], 1
             return
         if self._tab is not None:
             if tag == "tr":
                 self._row = []
             elif tag in ("td", "th") and self._row is not None and self._tab_depth == 1:
-                def num(k):
-                    try:
-                        return max(1, min(60, int(re.sub(r"\D", "", a.get(k, "1")) or 1)))
-                    except ValueError:
-                        return 1
-                self._cell = {"th": tag == "th", "col": num("colspan"), "row": num("rowspan"), "text": []}
+                self._cell = [tag == "th", []]
             elif tag in ("br", "li") and self._cell is not None:
-                self._cell["text"].append(", ")
+                self._cell[1].append(", ")
             return
-        if tag == "p" and self._head is None:
+        if tag in ("h2", "h3", "h4"):
+            self._head = []
+        elif tag == "p" and self._head is None:
             self._para = []
 
     def handle_endtag(self, tag):
@@ -128,9 +147,16 @@ class _Page(HTMLParser):
             if tag == self._skip[0]:
                 self._skip.pop()
             return
-        if tag in ("h2", "h3", "h4") and self._head is not None:
-            self.section = re.sub(r"\s+", " ", "".join(self._head)).strip()
-            self._head = None
+        if self._pi is not None:
+            if tag == self._pi[1]:
+                self._pi[2] -= 1
+                if self._pi[2] == 0:
+                    text = _tidy("".join(self._pi[3]))
+                    if self._pi[0] == "label":
+                        self._pi_label = text
+                    elif self._pi_label and text:
+                        self.infobox.setdefault(self._pi_label.lower(), text)
+                    self._pi = None
             return
         if self._tab is not None:
             if tag == "table":
@@ -138,26 +164,30 @@ class _Page(HTMLParser):
                 if self._tab_depth == 0:
                     self.tables.append(self._tab)
                     self._tab = None
-            elif tag in ("td", "th") and self._cell is not None and self._row is not None and self._tab_depth == 1:
-                self._cell["text"] = _tidy("".join(self._cell["text"]))
-                self._row.append(self._cell)
+            elif tag in ("td", "th") and self._cell is not None and self._row is not None:
+                self._row.append((self._cell[0], _tidy("".join(self._cell[1]))))
                 self._cell = None
             elif tag == "tr" and self._row is not None and self._tab_depth == 1:
                 if self._row:
-                    self._tab["rows"].append(self._row)
+                    self._tab.append(self._row)
                 self._row = None
             return
-        if tag == "p" and self._para is not None:
+        if tag in ("h2", "h3", "h4") and self._head is not None:
+            self.section = re.sub(r"\s+", " ", "".join(self._head)).strip()
+            self._head = None
+        elif tag == "p" and self._para is not None:
             t = _tidy("".join(self._para))
             if t:
-                self.paragraphs.append(t)
+                self.para_info.append((self.section, t))
             self._para = None
 
     def handle_data(self, data):
         if self._skip:
             return
-        if self._cell is not None:
-            self._cell["text"].append(data)
+        if self._pi is not None:
+            self._pi[3].append(data)
+        elif self._cell is not None:
+            self._cell[1].append(data)
         elif self._head is not None:
             self._head.append(data)
         elif self._para is not None:
@@ -172,159 +202,47 @@ def _tidy(t: str) -> str:
     t = re.sub(r"(?:\s*,\s*)+$", "", t.strip())
     t = re.sub(r"^(?:\s*,\s*)+", "", t)
     t = re.sub(r"\s+,", ",", t)
-    t = re.sub(r",(?:\s*,)+", ",", t)
-    return t.strip()
+    return re.sub(r",(?:\s*,)+", ",", t).strip()
 
 
-def parse_page(html: str) -> _Page:
-    p = _Page()
-    p.feed(html or "")
-    p.close()
-    return p
-
-
-def _grid(rows: list[list[dict]]) -> list[list[tuple[bool, str]]]:
-    """Expand colspan/rowspan so every row has a cell for every column.  Cells are (is_header, text)."""
-    out: list[list[tuple[bool, str]]] = []
-    pending: dict[int, list] = {}                     # column -> [rows still to fill, cell]
-    for row in rows:
-        cells: list[tuple[bool, str]] = []
-        col = 0
-        it = iter(row)
-        cur = next(it, None)
-        while cur is not None or col in pending:
-            if col in pending:
-                left, c = pending[col]
-                cells.append((c["th"], c["text"]))
-                if left <= 1:
-                    del pending[col]
-                else:
-                    pending[col][0] = left - 1
-                col += 1
-                continue
-            for _ in range(cur["col"]):
-                cells.append((cur["th"], cur["text"]))
-                if cur["row"] > 1:
-                    pending[col] = [cur["row"] - 1, cur]
-                col += 1
-            cur = next(it, None)
-        out.append(cells)
-    return out
-
-
-ROLES = [
-    ("title", r"^(?:title|episode title|cartoon|short|name|episode)$|title"),
-    ("release", r"release|air date|aired|original air|premiere|first aired|date"),
-    ("number", r"^(?:no\.?|#|number|episode no\.?|ep\.?|no\. overall|overall|no\. in (?:season|series))$|^no\b"),
-    ("directed", r"direct"),
-    ("written", r"writ|story|screenplay"),
-    ("volume", r"volume|\bvol\b|dvd|blu-?ray|disc"),
-    ("season", r"season|series|collection|package"),
-    ("notes", r"note|comment|summary|description|award|remark"),
-]
-
-
-def _roles(headers: list[str]) -> dict[str, int]:
-    found: dict[str, int] = {}
-    for role, pat in ROLES:
-        for i, h in enumerate(headers):
-            if i in found.values():
-                continue
-            if re.search(pat, h.strip().lower()):
-                found[role] = i
-                break
-    return found
-
-
-@dataclass
-class Episode:
-    title: str
-    release: str = ""
-    number: str = ""
-    directed: str = ""
-    written: str = ""
-    volume: str = ""
-    season: str = ""
-    notes: str = ""
-    section: str = ""
-    position: int = 0                  # 1-based place in its table (release order)
-    of: int = 0                        # how many rows that table has
-    extra: dict = field(default_factory=dict)
-
-    def to_json(self) -> dict:
-        return self.__dict__.copy()
-
-
-def episodes_from_html(html: str, page_title: str = "") -> list[Episode]:
-    """Every episode-like table on the page -> episodes.  Columns are recognised by their header text, so a table with
-    different columns, or extra ones (volume, season ...), still works; a table with no title column is ignored."""
-    out: list[Episode] = []
-    for tab in parse_page(html).tables:
-        if tab["kind"] != "wikitable":
-            continue
-        grid = _grid(tab["rows"])
-        if len(grid) < 3:
-            continue
-        hi = next((i for i, r in enumerate(grid) if r and all(th for th, _ in r)), None)
-        if hi is None:
-            continue
-        headers = [t for _, t in grid[hi]]
-        roles = _roles(headers)
-        if "title" not in roles:
-            continue
-        rows = []
-        for r in grid[hi + 1:]:
-            texts = [t for _, t in r]
-            if not any(texts) or len(texts) < len(headers) - 1:
-                continue
-            if len(set(texts)) == 1 and len(texts[0]) > 25 and rows:                     # a summary row spanning the table
-                rows[-1]["notes_extra"] = texts[0]
-                continue
-            rows.append({"texts": texts, "notes_extra": ""})
-        valid = [r for r in rows if r["texts"][roles["title"]] and r["texts"][roles["title"]].lower() != headers[roles["title"]].lower()]
-        if len(valid) < 3:
-            continue
-        for pos, r in enumerate(valid, 1):
-            texts = r["texts"]
-            get = lambda role: texts[roles[role]] if role in roles and roles[role] < len(texts) else ""
-            title = re.sub(r'^[“"\']+|[”"\']+$', "", get("title")).strip()
-            title = re.sub(r"\s*\(.*?\)\s*$", "", title) if re.search(r"\(\s*(?:\d{4}|film|short)\s*\)\s*$", title) else title
-            notes = get("notes") or r["notes_extra"]
-            claimed = set(roles.values())
-            extra = {headers[i]: texts[i] for i in range(min(len(headers), len(texts))) if i not in claimed and headers[i] and texts[i]}
-            out.append(Episode(title=title, release=get("release"), number=get("number"), directed=get("directed"), written=get("written"),
-                               volume=get("volume"), season=get("season"), notes=notes, section=tab["section"] or page_title,
-                               position=pos, of=len(valid), extra=extra))
-    return out
+_DATE = re.compile(r"(?:[A-Z][a-z]+ \d{1,2}, \d{4}|\d{1,2} [A-Z][a-z]+ \d{4})")
+_RELEASED = re.compile(r"(?:released|premiered|aired|debuted|first shown)(?: theatrically)?(?: on| in)? (" + _DATE.pattern + ")")
 
 
 def details_from_html(html: str) -> dict:
-    """An article's infobox (director, running time ...) and its opening sentence."""
-    page = parse_page(html)
-    info: dict = {}
-    for tab in page.tables:
-        if tab["kind"] != "infobox":
-            continue
-        for row in _grid(tab["rows"]):
+    """{"release": the exact date, "plot_source": the text a plot overview is made from} - whichever the page has."""
+    p = _Page()
+    p.feed(html or "")
+    p.close()
+    info = dict(p.infobox)
+    for tab in p.tables:
+        for row in tab:
             if len(row) >= 2 and row[0][0] and row[1][1]:
-                info[row[0][1].lower()] = row[1][1]
-    pick = lambda *keys: next((info[k] for k in keys if info.get(k)), "")
-    d = {"directed": pick("directed by", "director"), "written": pick("story by", "written by", "screenplay by"),
-         "length": pick("running time", "runtime"), "release": pick("release date", "release dates", "released"),
-         "music": pick("music by"), "voices": pick("voices of", "voices by")}
-    para = next((p for p in page.paragraphs if len(p) > 60), "")
-    if para:
-        first = re.split(r"(?<=[.!?])\s+(?=[A-Z])", para)[0]
-        d["summary"] = (first if len(first) <= 260 else first[:257].rsplit(" ", 1)[0] + "...")
-    return {k: v for k, v in d.items() if v}
+                info.setdefault(row[0][1].lower(), row[1][1])
+    plot = [t for sec, t in p.para_info if re.search(r"plot|synopsis|summary|premise|story|overview", sec, re.I) and len(t) > 30]
+    intro = [t for sec, t in p.para_info if not re.search(r"trivia|reception|production|cast|home media|references|see also", sec, re.I) and len(t) > 30]
+    src = " ".join(plot or intro)[:1800]
+    out: dict = {}
+    if src:
+        out["plot_source"] = src
+    raw = next((info[k] for k in ("release date", "released", "release", "premiere", "air date", "first aired", "original air date", "date") if info.get(k)), "")
+    m = _DATE.search(raw)
+    if m:
+        out["release"] = m.group(0)
+    else:
+        m = _RELEASED.search(src)
+        if m:
+            out["release"] = m.group(1)
+        elif raw and len(raw) <= 30:
+            out["release"] = raw
+    return out
 
 
-# =========================================================================== fetching and caching
-def _get_html(title: str, fetch=None) -> str:
+def _get_html(api: str, title: str, fetch=None) -> str:
     q = urllib.parse.urlencode({"action": "parse", "page": title, "prop": "text", "format": "json", "formatversion": "2", "redirects": "1", "disableeditsection": "1"})
-    data = (fetch or FETCH)(f"{API}?{q}")
+    data = (fetch or FETCH)(f"{api}?{q}")
     if "error" in data:
-        raise LookupError_(f"Wikipedia has no page called “{title}”")
+        raise LookupError_(f"no page called “{title}”")
     text = data.get("parse", {}).get("text", "")
     return text if isinstance(text, str) else text.get("*", "")
 
@@ -344,94 +262,49 @@ def _save(path: Path, data: dict) -> None:
         log.warning("Couldn't save the Pink Panther cache: %s", e)
 
 
-def refresh_index(cfg: dict, path: Path | None = None, fetch=None) -> dict:
-    """Download the episode tables and keep them.  Raises LookupError_ if nothing usable came back."""
-    path = path or CACHE_FILE
-    pages = [p for p in cfg["pinkpanther"].get("pages", []) if str(p).strip()] or ["List of The Pink Panther cartoons"]
-    eps: list[dict] = []
-    problems: list[str] = []
-    for title in pages:
-        try:
-            found = episodes_from_html(_get_html(str(title), fetch), str(title))
-        except LookupError_ as e:
-            problems.append(str(e))
-            continue
-        except Exception as e:
-            problems.append(f"couldn't read “{title}” ({type(e).__name__}: {e})")
-            continue
-        if not found:
-            problems.append(f"“{title}” has no episode table I could read")
-        eps += [e.to_json() for e in found]
-    if not eps:
-        raise LookupError_("; ".join(problems) or "no episodes found")
-    old = _load(path)
-    data = {"fetched": datetime.now().isoformat(timespec="seconds"), "pages": pages, "episodes": eps, "details": old.get("details", {}), "problems": problems}
-    _save(path, data)
-    return data
-
-
-def get_index(cfg: dict, path: Path | None = None, fetch=None, force: bool = False) -> dict | None:
-    """The cached episode list, refreshed when it is old.  None = nothing available (and why: see ``LAST_PROBLEM``)."""
-    global _last_failure, LAST_PROBLEM
-    path = path or CACHE_FILE
+def _remember(key: str, path: Path | None, **values) -> None:
     with _lock:
-        data = _load(path)
-        age_days = 9999.0
-        if data.get("fetched"):
-            try:
-                age_days = (datetime.now() - datetime.fromisoformat(data["fetched"])).total_seconds() / 86400
-            except ValueError:
-                pass
-        stale = force or not data.get("episodes") or age_days > float(cfg["pinkpanther"].get("cache_days", 30)) \
-            or sorted(data.get("pages", [])) != sorted(cfg["pinkpanther"].get("pages", []))
-        if stale and cfg["pinkpanther"].get("lookup", True):
-            if force or time.time() - _last_failure > OFFLINE_RETRY_SECONDS:
-                try:
-                    data = refresh_index(cfg, path, fetch)
-                    LAST_PROBLEM = ""
-                except Exception as e:
-                    _last_failure = time.time()
-                    LAST_PROBLEM = str(e) if isinstance(e, LookupError_) else f"{type(e).__name__}: {e}"
-                    log.warning("Pink Panther episode list unavailable: %s", LAST_PROBLEM)
-                    if force:
-                        raise
-        return data if data.get("episodes") else None
-
-
-LAST_PROBLEM = ""
+        data = _load(path or CACHE_FILE)
+        data.setdefault("details", {}).setdefault(key, {}).update(values)
+        _save(path or CACHE_FILE, data)
 
 
 def fetch_details(ep: dict, cfg: dict, path: Path | None = None, fetch=None) -> dict:
-    """The episode's own article (infobox + first sentence), if it has one.  Cached per title."""
+    """The plot text and release date from the web: the Pink Panther Wiki (Fandom) page named like the short, else Wikipedia.
+    Cached per title (including "nothing found"), so a short is looked up once."""
+    global LAST_PROBLEM
     path = path or CACHE_FILE
     key = norm(ep["title"])
     with _lock:
-        data = _load(path)
-        if key in data.get("details", {}):
-            return data["details"][key]
+        cached = _load(path).get("details", {}).get(key)
+        if cached is not None:
+            return cached
     result: dict = {}
     try:
-        q = urllib.parse.urlencode({"action": "query", "list": "search", "srsearch": f'"{ep["title"]}" Pink Panther cartoon', "format": "json",
-                                    "formatversion": "2", "srlimit": "4"})
-        hits = (fetch or FETCH)(f"{API}?{q}").get("query", {}).get("search", [])
-        for h in hits:
-            t = h.get("title", "")
-            if norm(re.sub(r"\s*\(.*?\)\s*$", "", t)) == key and re.search(r"pink panther|depatie|freleng|cartoon|short", h.get("snippet", "") + t, re.I):
-                html = _get_html(t, fetch)
-                if MENTION.search(re.sub(r"<[^>]+>", " ", html)):
-                    result = details_from_html(html)
-                    break
+        try:
+            result = details_from_html(_get_html(FANDOM_API, re.sub(r"\s*\((?:Ant|Inspector)? ?[Ss]hort\)\s*$", "", ep["title"]), fetch))
+        except LookupError_:
+            result = {}
+        if not result.get("plot_source"):
+            q = urllib.parse.urlencode({"action": "query", "list": "search", "srsearch": f'"{ep["title"]}" Pink Panther cartoon', "format": "json",
+                                        "formatversion": "2", "srlimit": "4"})
+            for h in (fetch or FETCH)(f"{WIKIPEDIA_API}?{q}").get("query", {}).get("search", []):
+                t = h.get("title", "")
+                if norm(re.sub(r"\s*\(.*?\)\s*$", "", t)) == key and re.search(r"pink panther|depatie|freleng|cartoon|short", h.get("snippet", "") + t, re.I):
+                    html = _get_html(WIKIPEDIA_API, t, fetch)
+                    if MENTION.search(re.sub(r"<[^>]+>", " ", html)):
+                        result = {**details_from_html(html), **{k: v for k, v in result.items() if v}}
+                        break
+        LAST_PROBLEM = ""
     except Exception as e:
-        log.info("No article details for %r (%s)", ep["title"], e)
-        return {}                                                  # don't cache a network failure
-    with _lock:
-        data = _load(path)
-        data.setdefault("details", {})[key] = result
-        _save(path, data)
+        LAST_PROBLEM = f"{type(e).__name__}: {e}"
+        log.info("No online details for %r (%s)", ep["title"], LAST_PROBLEM)
+        return {}                                                     # don't remember a network failure as "nothing exists"
+    _remember(key, path, **result)
     return result
 
 
-# =========================================================================== understanding what you wrote
+# =========================================================================== matching what you wrote
 def norm(s: str) -> str:
     s = (s or "").lower().replace("&", " and ")
     s = re.sub(r"[^a-z0-9 ]+", " ", s)
@@ -452,27 +325,25 @@ def score(query: str, title: str) -> float:
     return max(contains, 0.55 * ratio + 0.45 * jac, ratio * 0.97 if ratio > 0.8 else 0.0)
 
 
+def _season_covers(season: str, want: int) -> bool:
+    m = re.fullmatch(r"(\d+)(?:–(\d+))?", season)
+    return bool(m) and int(m.group(1)) <= want <= int(m.group(2) or m.group(1))
+
+
 def context_boost(ep: dict, query: str, context: str) -> float:
-    """What the REST of the message says about the episode: a year, a director, a volume/season number, a detail from its notes.
-    It can tip a close call but never creates a match on its own."""
-    ctx = norm(MENTION.sub(" ", context).replace(query, " "))                    # "Pink Panther" itself says nothing about WHICH episode
-    if not ctx:
-        return 0.0
+    """What the REST of the message says about the episode: a year it aired, a season number.  It can tip a close call but
+    never creates a match on its own."""
+    ctx = MENTION.sub(" ", context).replace(query, " ")
     boost = 0.0
-    years = set(re.findall(r"\b(19[6-9]\d)\b", context))
-    ep_years = set(re.findall(r"\b(19[6-9]\d)\b", ep.get("release", "") or ""))
+    years = set(re.findall(r"\b(19[6-9]\d)\b", ctx))
+    ep_years: set[str] = set()
+    for a, b in re.findall(r"(\d{4})(?:–(\d{4}))?", ep.get("years", "") or ""):
+        ep_years |= set(map(str, range(int(a), int(b or a) + 1)))
     if years and ep_years:
         boost += 0.15 if years & ep_years else -0.06
-    for name in re.findall(r"[A-Za-z]{4,}", ep.get("directed", "") or ""):
-        if re.search(rf"\b{name.lower()}\b", ctx):
-            boost += 0.10
-            break
-    for label, field in (("volume|vol", "volume"), ("season|series", "season")):
-        m = re.search(rf"\b(?:{label})\s*(\d+)", context, re.I)
-        if m and ep.get(field):
-            boost += 0.12 if re.search(rf"\b0*{int(m.group(1))}\b", ep[field]) else -0.08
-    words = {w for w in norm(ep.get("notes", "")).split() if len(w) >= 5} - set(norm(query).split())
-    boost += min(0.09, 0.03 * sum(1 for w in words if re.search(rf"\b{w}\b", ctx)))
+    m = re.search(r"\b(?:season|series)\s*(\d+)\b", ctx, re.I)
+    if m:
+        boost += 0.12 if any(_season_covers(a["season"], int(m.group(1))) for a in ep.get("appearances", [])) else -0.08
     return boost
 
 
@@ -487,17 +358,10 @@ def rank(query: str, episodes: list[dict], context: str = "") -> list[tuple[floa
 
 
 def match(query: str, episodes: list[dict], context: str = "") -> tuple[dict | None, list[dict], float]:
-    """(the episode if we are CONFIDENT, else None; the closest few as suggestions; the confidence 0..1).
+    """(the episode if we are CONFIDENT, else None; the closest few; the confidence 0..1).
 
-    Confident = a good score and a clear lead over the runner-up (the message's year / director / volume / notes can tip it).
-    Doubtful matches are never printed as fact: they come back as suggestions."""
-    nq = norm(query)
-    m = re.search(r"\b(?:episode|ep|no|number|#)\s*(\d{1,3})\b", query, re.I)
-    if m and len(nq.split()) <= 4:                                                          # "episode 12": by number, if the list has numbers
-        want = int(m.group(1))
-        hit = [e for e in episodes if (re.sub(r"\D", "", e.get("number", "") or "") or "x").lstrip("0") == str(want)]
-        if len(hit) == 1:
-            return hit[0], [], 1.0
+    Confident = a good score and a clear lead over the runner-up (the message's year / season can tip it).  A doubtful match is
+    never used: the slip shows your own wording instead."""
     ranked = rank(query, episodes, context)
     if not ranked:
         return None, [], 0.0
@@ -515,129 +379,259 @@ def match(query: str, episodes: list[dict], context: str = "") -> tuple[dict | N
     return None, sugg, best[0]
 
 
+# =========================================================================== understanding what you wrote
 _FILLER_START = re.compile(r"^(?:(?:please|pls|watch|see|find|look up|lookup|the|episode|episodes|ep|cartoon|cartoons|short|shorts|show|series|season|volume|vol|called|named|titled|about|from|of|-|:|–|—)\b[\s:\-–—]*)+", re.I)
 _FILLER_END = re.compile(r"(?:[\s:\-–—,]*\b(?:episode|episodes|ep|cartoon|cartoons|short|shorts|show|please|pls|to watch|on sunday|tonight)\b)+[\s.!]*$", re.I)
+_STOP = set("""to watch see the a an some few list of episodes episode cartoons cartoon shorts short show please for my on this that these those want like i me
+sunday saturday monday tuesday wednesday thursday friday tonight tomorrow today weekend with kids and or in at it is are be about from""".split())
+_GREETING = re.compile(r"^\s*(?:hi|hello|hey|dear|thanks|thank you|cheers|regards|kind regards|best|sent from)\b", re.I)
 
 
 def clean_query(line: str) -> str:
     t = re.sub(r"^\s*(?:[-*•>]+|\d{1,2}[.)])\s+", "", line)                  # list bullets / "1." numbering
     t = MENTION.sub(" ", t)
-    t = re.sub(r"\bshow\b", "show", t, flags=re.I)
     t = re.sub(r"[“”\"]", "", t)
     t = _FILLER_START.sub("", t.strip())
     t = _FILLER_END.sub("", t.strip())
-    return re.sub(r"\s+", " ", t).strip(" -:–—,.!?")
+    t = re.sub(r"\s+", " ", t).strip(" -:–—,.!?")
+    return "" if t and all(w in _STOP for w in norm(t).split()) else t               # "episodes to watch" says nothing about which one
 
 
 def plain_line(line: str) -> str:
-    """The line as you wrote it, minus bullets, quotes and the words "Pink Panther" (for showing when nothing matched)."""
+    """The line as you wrote it, minus bullets, quotes and the words "Pink Panther"."""
     t = re.sub(r"^\s*(?:[-*•>]+|\d{1,2}[.)])\s+", "", line)
     t = re.sub(r"[“”\"]", "", MENTION.sub(" ", t))
     return re.sub(r"\s+", " ", t).strip(" -:–—,.!?")
 
 
-def candidate_lines(inc, cfg: dict) -> tuple[list[tuple[str, str]], bool, list[str]]:
-    """What in this message could be an episode?  Returns ([(original line, query)], strong context?, symbol ids from [tags])."""
-    subj, sym = icon_lib.extract_tags(inc.subject or "", cfg)
-    body, bsym = icon_lib.extract_tags(inc.body or "", cfg)
-    icons = list(dict.fromkeys(sym + bsym))
-    lines = [ln.strip() for ln in re.split(r"[\n;]+", body) if ln.strip()]
-    strong = bool(MENTION.search(subj)) or any(MENTION.search(ln) and CONTEXT_WORDS.search(ln) for ln in lines)
-    cands: list[tuple[str, str]] = []
-    if MENTION.search(subj):
-        rest = clean_query(subj)
-        if rest and len(norm(rest).split()) <= 7 and not CONTEXT_WORDS.fullmatch(rest.lower()):
-            cands.append((subj, rest))
-    for ln in lines:
-        if strong or MENTION.search(ln):
-            q = clean_query(ln)
-            if q:
-                cands.append((ln, q))
-    return cands, strong, icons
+def looks_like_a_title(q: str) -> bool:
+    """A short bare phrase, not a sentence or a greeting."""
+    words = q.split()
+    return 1 <= len(words) <= 7 and not _GREETING.match(q) and not re.search(r"[:?]\s*$|[.!]\s+\w", q)
 
 
-# =========================================================================== the slips
-def fact_lines(ep: dict, details: dict, notes_ok: bool = True) -> list[str]:
-    lines: list[str] = []
-    add = lambda label, value: lines.append(f"{label}: {value}") if value else None
-    add("RELEASED", ep.get("release") or details.get("release"))
-    if ep.get("number"):
-        add("EPISODE", f"No. {ep['number']}")
-    elif ep.get("position") and ep.get("of"):
-        add("EPISODE", f"#{ep['position']} of {ep['of']} in release order")
-    add("SERIES", ep.get("season") or (ep.get("section") if ep.get("section") and not re.search(r"list of", ep["section"], re.I) else ""))
-    add("VOLUME", ep.get("volume"))
-    add("DIRECTOR", ep.get("directed") or details.get("directed"))
-    add("WRITER", ep.get("written") or details.get("written"))
-    add("LENGTH", details.get("length"))
-    for k, v in (ep.get("extra") or {}).items():
-        if len(v) < 40 and re.search(r"studio|company|network|production|code|format|distribut", k, re.I):
-            add(k.upper()[:14], v)
-    if notes_ok:
-        add("NOTES", ep.get("notes") or details.get("summary"))
+_SIGNOFF = re.compile(r"^\s*(?:thanks|thank you|thx|cheers|regards|kind regards|best regards|best wishes|best|warm regards|ta|love|talk soon|sent from)\b[\s,!.]*", re.I)
+
+
+def drop_signoff(lines: list[str], sender: str = "") -> list[str]:
+    """"Thanks,\nJack" at the end is a sign-off, not an episode: cut from the sign-off word onwards (only when it is in the last few lines)."""
+    for i, ln in enumerate(lines):
+        if i >= len(lines) - 4 and _SIGNOFF.match(ln) and len(ln.split()) <= 4:
+            return lines[:i]
+    first = (sender or "").split()[:1]
+    if lines and first and len(lines[-1].split()) <= 2 and lines[-1].strip(" ,.!-").lower() == first[0].lower():
+        return lines[:-1]
     return lines
 
 
-def make_card(query: str, original: str, ep: dict | None, suggestions: list[dict], details: dict, cfg: dict, now: datetime,
-              icons: list[str], problem: str = "") -> Card:
+def long_message(body: str) -> bool:
+    return len([ln for ln in re.split(r"[\n;]+", body or "") if ln.strip()]) > 6 or len(body or "") > 500
+
+
+def tidy_body(body: str) -> str:
+    """A long email: drop the signature, disclaimers, quoted replies and links first, so only what you wrote is read."""
+    if not long_message(body):
+        return body or ""
+    from .emailclean import clean_forwarded
+    try:
+        return clean_forwarded(body) or body
+    except Exception:
+        return body
+
+
+def scan_titles(line: str, titles: list[tuple[str, dict]]) -> list[dict]:
+    """Episodes whose exact title appears in the line (a longer title swallows a shorter one inside it)."""
+    n = norm(line)
+    hits = []
+    for nt, ep in titles:
+        m = re.search(rf"(?<![a-z0-9]){re.escape(nt)}(?![a-z0-9])", n)
+        if m:
+            hits.append((m.start(), m.end(), ep))
+    keep = [h for h in hits if not any(o is not h and o[0] <= h[0] and h[1] <= o[1] and (o[1] - o[0]) > (h[1] - h[0]) for o in hits)]
+    return [ep for _, _, ep in sorted(keep, key=lambda h: h[0])]
+
+
+def find_episodes(inc, cfg: dict, episodes: list[dict]) -> dict:
+    """Read the message.  Returns {"found": [(line, episode, confidence)], "guesses": [(line, name as written)], "strong": bool,
+    "icons": [...], "long": bool, "body": cleaned text}.  Only confident matches go in "found"; "guesses" are names that
+    look like episode titles but aren't in the list."""
+    subj, sym = icon_lib.extract_tags(inc.subject or "", cfg)
+    body0, bsym = icon_lib.extract_tags(inc.body or "", cfg)
+    icons = list(dict.fromkeys(sym + bsym))
+    long_ = long_message(body0)
+    body = tidy_body(body0)
+    lines = drop_signoff([ln.strip() for ln in re.split(r"[\n;]+", body) if ln.strip()], getattr(inc, "sender_name", "") or "")
+    strong = bool(MENTION.search(subj)) or any(MENTION.search(ln) and CONTEXT_WORDS.search(ln) for ln in lines)
+    context = f"{subj}\n{body}"
+    titles = [(norm(e["title"]), e) for e in episodes if len(norm(e["title"])) >= 6 or len(norm(e["title"]).split()) >= 2]
+    work: list[str] = []
+    if MENTION.search(subj):
+        work.append(subj)                                              # "Pink Panther - The Pink Phink"
+    work += [ln for ln in lines if strong or MENTION.search(ln)]       # a weak mention only counts for the lines that mention it
+    found: list[tuple[str, dict, float]] = []
+    guesses: list[tuple[str, str]] = []
+    seen: set[str] = set()
+
+    def add(original, ep, conf):
+        if norm(ep["title"]) not in seen:
+            seen.add(norm(ep["title"]))
+            found.append((original, ep, conf))
+
+    for line in work:
+        hits = scan_titles(line, titles)
+        for ep in hits:                                                # the exact title is in the text: confident
+            add(line, ep, 1.0)
+        if hits:
+            continue
+        quoted = [q.strip() for q in re.findall(r"[“\"']([^“”\"']{3,70})[”\"']", line) if clean_query(q)]
+        q = clean_query(line)
+        queries = quoted + ([q] if q and looks_like_a_title(q) else [])
+        got = False
+        for query in queries:
+            ep, _sugg, conf = match(query, episodes, context)
+            if ep is not None:
+                add(line, ep, conf)
+                got = True
+        if not got and strong and queries:
+            # not in the list: the name as written is the best guess.  In a long email only quoted names or short lines with "pink" in them count.
+            name = queries[0]
+            if not long_ or quoted or re.search(r"pink", name, re.I):
+                guesses.append((line, name))
+    return {"found": found, "guesses": guesses, "strong": strong, "icons": icons, "long": long_, "body": body}
+
+
+# =========================================================================== the plot overview (no spoilers)
+_SENT = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(])")
+PLOT_SYSTEM = ("You write the plot overview of a classic cartoon for someone deciding whether to watch it. Use ONLY facts stated in the text you are given. "
+               "Write 2 to 4 short, plain sentences describing the set-up: who is in it and what the situation is. NEVER reveal how it ends, any twist or the "
+               "punchline. No bullet points, no title, no remarks about the text.")
+
+
+def sentences(text: str) -> list[str]:
+    return [x.strip() for x in _SENT.split(re.sub(r"\s+", " ", text or "")) if len(x.strip()) > 2]
+
+
+def extractive_plot(source: str, max_sentences: int = 3, limit: int = 420) -> str:
+    """No AI: the opening sentences of the plot. The set-up comes first and the ending last, so this keeps clear of spoilers."""
+    out, total = [], 0
+    for sent in sentences(source):
+        sent = re.sub(r"\s*\([^)]*\)", "", sent).strip()
+        if len(sent) < 25:
+            continue
+        if out and total + len(sent) > limit:
+            break
+        out.append(sent)
+        total += len(sent)
+        if len(out) == max_sentences:
+            break
+    return " ".join(out)
+
+
+def ai_plot(title: str, source: str, cfg: dict) -> str | None:
+    """The local model's 2-4 sentence overview, or None if it isn't available or made things up (everything it says must come from the text)."""
+    from . import llm
+    text, info = llm.generate(PLOT_SYSTEM, f"Cartoon: {title}\nText:\n{source[:1500]}\n\nPlot overview (2 to 4 sentences, no spoilers):", cfg["llm"], num_predict=170)
+    if not text:
+        log.info("Plot overview: AI not used (%s)", info.get("reason"))
+        return None
+    t = re.sub(r"\*\*|__|`", "", text)
+    t = re.sub(r"^\s*(?:plot overview|overview|plot|summary)\s*[:\-]\s*", "", t, flags=re.I)
+    t = re.sub(r"(?m)^\s*(?:[-*•]|\d+[.)])\s+", "", t)
+    sents = sentences(t)[:4]
+    if not sents or sum(len(x) for x in sents) < 50:
+        return None
+    ok, bad = llm.grounded(sents, f"{title} {source}")
+    if not ok:
+        log.info("Plot overview: AI answer rejected (%s)", ", ".join(bad[:5]))
+        return None
+    return " ".join(sents)
+
+
+def plot_for(ep: dict, details: dict, cfg: dict, path: Path | None, budget: dict) -> str:
+    """2-4 sentences, spoiler-free.  The AI writes it when AI mode is on (and it is kept for next time); otherwise, or if it fails, the
+    opening of the plot text.  Nothing to go on = nothing printed."""
+    src = details.get("plot_source") or ""
+    if not src.strip():
+        return ""
     pp = cfg["pinkpanther"]
+    if pp.get("ai_plot", True) and cfg["summary"].get("backend") == "ollama":
+        if details.get("plot_ai"):
+            return details["plot_ai"]
+        if budget.get("ai", 0) > 0:
+            budget["ai"] -= 1
+            t = ai_plot(ep["title"], src, cfg)
+            if t:
+                _remember(norm(ep["title"]), path, plot_ai=t)
+                return t
+    return extractive_plot(src)
+
+
+# =========================================================================== the slips
+def short_season(a: dict) -> str:
+    return f"S{a['season']} #{a['episode']}"
+
+
+def fact_lines(ep: dict, details: dict) -> list[str]:
+    """Only these, in this order, and only the ones known: SEASON, DATE, EPISODE (and where else it was shown)."""
+    lines: list[str] = []
+    aps = ep.get("appearances", [])
+    if aps:
+        first = aps[0]
+        lines.append(f"SEASON: {first['season']} - {first['show']}")
+        lines.append(f"DATE: {details['release']}" if details.get("release") else f"DATE: {first['years']} (TV)")
+        lines.append(f"EPISODE: {first['episode']}")
+        if len(aps) > 1:
+            lines.append("ALSO: " + ", ".join(short_season(a) for a in aps[1:4]) + (" ..." if len(aps) > 4 else ""))
+    elif details.get("release"):
+        lines.append(f"DATE: {details['release']}")
+    return lines
+
+
+def make_card(ep: dict | None, name: str, plot: str, details: dict, cfg: dict, now: datetime, icons: list[str]) -> Card:
+    """A matched episode: real title, season, date, episode, plot.  Not in the list: just the name as you wrote it."""
+    pp = cfg["pinkpanther"]
+    sections: list[Section] = []
     if ep:
-        sections = [Section("text", text="\n".join(fact_lines(ep, details)) or "(No more details found.)")]
-        heading = ep["title"]
-        if norm(original) != norm(ep["title"]) and norm(clean_query(original)) != norm(ep["title"]):
-            sections.append(Section("text", label="YOU WROTE", text=original))
-        stamp = ""
-    else:
-        heading = (plain_line(original) or query)[:80].strip() or "Pink Panther"
-        why = problem or ("Lookup is switched off." if not pp.get("lookup", True) else "I couldn't match this to an episode.")
-        text = [why]
-        if suggestions:
-            text.append("Did you mean: " + "; ".join(s["title"] for s in suggestions) + "?")
-        sections = [Section("text", text="\n".join(text))]
-        stamp = ""
-    card = Card(kind="pinkpanther", template="pinkpanther", heading=heading, sections=sections, icons=icons, source="email", created=now, stamp=stamp,
-                vars={"graphic_style": pp.get("style", "shaded"), "graphic": "on" if pp.get("show_image", True) else "off", "date": now.strftime("%a %d %b")})
-    return card
+        facts = fact_lines(ep, details)
+        if facts:
+            sections.append(Section("text", text="\n".join(facts)))
+        if plot:
+            sections.append(Section("text", label="PLOT", text=plot))
+    return Card(kind="pinkpanther", template="pinkpanther", heading=(ep["title"] if ep else name) or "Pink Panther", sections=sections, icons=icons,
+                source="email", created=now, stamp="",
+                vars={"graphic_style": pp.get("style", "shaded"), "graphic": "on" if pp.get("show_image", True) else "off",
+                      "date": now.strftime("%a %d %b"), "matched": bool(ep)})
 
 
 def build(inc, cfg: dict, now: datetime, path: Path | None = None, fetch=None):
     """(Pink Panther cards, the rest of the message to print normally or None).  No cards if the message isn't about an episode.
 
-    An episode is only stated as fact when the match is confident; otherwise the slip says what you wrote and what it might be."""
+    The subject ("Pink Panther") says what it's about; the body, however long, is read for the episodes in it.  An episode is only
+    stated as fact when the match is confident; a name that isn't in the list is printed as you wrote it."""
     pp = cfg.get("pinkpanther", {})
     if not pp.get("enabled", True) or not MENTION.search(f"{inc.subject}\n{inc.body}"):
         return [], inc
-    cands, strong, icons = candidate_lines(inc, cfg)
-    if not cands and not strong:
+    res = find_episodes(inc, cfg, load_episodes())
+    strong, icons = res["strong"], res["icons"]
+    if not res["found"] and not strong:
         return [], inc
-    context = f"{inc.subject}\n{inc.body}"
-    index = get_index(cfg, path, fetch) if pp.get("lookup", True) else None
-    episodes = (index or {}).get("episodes", [])
-    problem = ""
-    if pp.get("lookup", True) and not episodes:
-        problem = f"I couldn't look it up just now ({LAST_PROBLEM or 'the episode list has not been downloaded yet'})."
+    cap = int(pp.get("max_episodes", 8))
+    lookup = pp.get("lookup", True)
+    budget = {"ai": int(pp.get("max_ai_plots", 3))}
     cards: list[Card] = []
     used: set[str] = set()
-    seen_titles: set[str] = set()
-    for original, query in cands[: int(pp.get("max_episodes", 8))]:
-        ep, sugg, _conf = match(query, episodes, context) if episodes else (None, [], 0.0)
-        if ep is None and not strong:
-            continue                                                  # a passing mention (a toy, a film night), not an episode: leave it alone
-        if ep is not None:
-            if norm(ep["title"]) in seen_titles:
-                used.add(original)
-                continue
-            seen_titles.add(norm(ep["title"]))
-        details = fetch_details(ep, cfg, path, fetch) if (ep and pp.get("details", True) and pp.get("lookup", True)) else {}
-        cards.append(make_card(query, original, ep, sugg, details, cfg, now, icons, problem))
+    for original, ep, _conf in res["found"][:cap]:
+        details = fetch_details(ep, cfg, path, fetch) if (lookup and pp.get("details", True)) else {}
+        cards.append(make_card(ep, "", plot_for(ep, details, cfg, path, budget), details, cfg, now, icons))
         used.add(original)
-    if not cards and strong:                                           # "Pink Panther" with nothing recognisable: still print the picture + the words
-        shown = (inc.body or "").strip() or inc.subject
-        cards.append(make_card("Pink Panther", shown, None, [], {}, cfg, now, icons,
-                               problem or "Nothing here looked like an episode title."))
+    for original, name in res["guesses"][: max(0, cap - len(cards))]:
+        cards.append(make_card(None, name[:80], "", {}, cfg, now, icons))
+        used.add(original)
+    if not cards:                                                      # about Pink Panther, but no episode could be pinned down
+        body = res["body"].strip()
+        first = next((s for s in sentences(body) if CONTEXT_WORDS.search(s) or MENTION.search(s)), "") or (sentences(body) or [inc.subject or ""])[0]
+        cards.append(make_card(None, (plain_line(first) or "Pink Panther")[:80], "", {}, cfg, now, icons))
         return cards, None
-    if not cards:
-        return [], inc
     if strong:
         return cards, None
     rest = "\n".join(ln for ln in (inc.body or "").split("\n") if ln.strip() and not any(u in ln for u in used)).strip()

@@ -178,7 +178,14 @@ BUILTIN: dict[str, tuple[str, list[str], list[dict]]] = {
         dot(50, 54, 3.2), S(arc(22, 22, 10, 8, 180, 360, 10), "hatch"), S(arc(78, 22, 10, 8, 180, 360, 10), "hatch")]),
     "tick": ("Done", ["tick", "check", "complete"], [
         S(spline((14, 54), (36, 76), (60, 46), (88, 14)), w=2.1), S(arc(50, 52, 44, 44, 40, 300, 30), w=0.9)]),
+    # Added later (not one of the original 24, so the numbers of your own symbols didn't move): the clapperboard for the WATCH LIST slips
+    "action": ("Action", ["clapper", "clapperboard", "movie", "film", "cinema", "watchlist"], [
+        S(rrect(12, 38, 76, 50, 3)), S(L((12, 34), (9, 20), (88, 8), (91, 22), (12, 34)), "hatch"),
+        S(L((22, 53), (78, 53))), S(L((22, 65), (62, 65))), S(L((22, 77), (48, 77))),
+        *sparks(((30, 3), (34, 10)), ((60, 1), (60, 7)), ((94, 8), (88, 12)))]),
 }
+
+CORE_SYMBOLS = 24          # the original built-ins keep numbers 1-24 forever; your own symbols follow; later built-ins come after those
 
 DEFAULT_ORDER = list(BUILTIN)
 
@@ -398,12 +405,15 @@ def render_sheet(cfg: dict, width: int = 576) -> Image.Image:
 
 # --------------------------------------------------------------------------- numbered list + printable/shareable chart
 def numbered(cfg: dict) -> list[dict]:
-    """Every symbol with a stable number: the built-ins are 1-24 (never renumbered), your own follow from 25."""
+    """Every symbol with a stable number: the original built-ins are 1-24 (never renumbered), your own follow from 25, newer built-ins after those."""
     ic = cfg.get("icons", {})
-    out = [{"n": n, "id": iid, "name": name, "enabled": iid not in ic.get("disabled", []), "builtin": True}
-           for n, (iid, (name, _short, _)) in enumerate(BUILTIN.items(), 1)]
-    for n, c in enumerate(ic.get("custom", []), len(BUILTIN) + 1):
+    items = list(BUILTIN.items())
+    mk = lambda n, iid, name: {"n": n, "id": iid, "name": name, "enabled": iid not in ic.get("disabled", []), "builtin": True}
+    out = [mk(n, iid, v[0]) for n, (iid, v) in enumerate(items[:CORE_SYMBOLS], 1)]
+    custom = ic.get("custom", [])
+    for n, c in enumerate(custom, CORE_SYMBOLS + 1):
         out.append({"n": n, "id": c["id"], "name": c.get("name") or c["id"], "enabled": True, "builtin": False})
+    out += [mk(n, iid, v[0]) for n, (iid, v) in enumerate(items[CORE_SYMBOLS:], CORE_SYMBOLS + len(custom) + 1)]
     return out
 
 
