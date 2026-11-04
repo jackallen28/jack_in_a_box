@@ -332,7 +332,7 @@ def build_records(cfg: dict, now: datetime, recs: list, icons: list[str]):
             continue
         seen.add(norm(r.title))
         it = {"title": r.title, "type": r.type or infer_type(r.desc), "year": r.year, "on": r.on, "season": r.season, "date": r.date,
-              "plot": plot_from_text(r.title, r.desc, cfg, bool(wl.get("plot_ai", True) and wl.get("ai", True)), budget, "movie or TV show", 2, 330) if wl.get("plot", True) else ""}
+              "plot": plot_from_text(r.title, r.desc, cfg, bool(wl.get("plot_ai", False)), budget, "movie or TV show", 2, 330) if wl.get("plot", True) else ""}
         cards.append(make_card(it, icons, cfg, now))
     return cards
 

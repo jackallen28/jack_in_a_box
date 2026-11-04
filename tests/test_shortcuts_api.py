@@ -185,7 +185,7 @@ def test_the_shortcuts_page_helpers_need_a_login_and_set_up_the_token(client):
     assert c.get("/api/shortcuts").status_code == 401 and c.post("/api/shortcuts-token", json={}, headers=H).status_code == 401
     login(c)
     info = c.get("/api/shortcuts").get_json()
-    assert info["inbox"] == "" and info["allowed_senders"] == [] and info["poll_seconds"] == 30                  # for the email-based recipes
+    assert info["inbox"] == "" and info["allowed_senders"] == [] and info["poll_seconds"] == 5                  # for the email-based recipes
     d = cfg.data
     d["email"].update(username="printer@gmail.com", allowed_senders=["me@icloud.com"], poll_seconds=20)
     cfg.replace(d)

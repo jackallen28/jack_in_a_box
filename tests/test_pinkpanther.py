@@ -311,7 +311,7 @@ def test_a_wikipedia_infobox_and_a_page_with_no_plot_section():
 
 
 # ----------------------------------------------------------------------------- the AI plot overview
-AI_CFG = normalise({"summary": {"backend": "ollama"}, "llm": {"url": "http://127.0.0.1:1"}})
+AI_CFG = normalise({"summary": {"backend": "ollama"}, "llm": {"url": "http://127.0.0.1:1"}, "pinkpanther": {"ai_plot": True}})
 
 
 class FakeOllama:
@@ -361,7 +361,7 @@ def test_ai_off_unavailable_or_disabled_uses_the_opening_of_the_plot_and_never_c
 def test_only_a_few_overviews_per_message_use_the_model(web, monkeypatch):
     fake = FakeOllama(GOOD)
     monkeypatch.setattr(llm, "_post", fake)
-    cfg = normalise({"summary": {"backend": "ollama"}, "pinkpanther": {"max_ai_plots": 1}})
+    cfg = normalise({"summary": {"backend": "ollama"}, "pinkpanther": {"ai_plot": True, "max_ai_plots": 1}})
     pp.build(msg("Pink Panther", "pink phink\nPinknic"), cfg, NOW)
     assert len(fake.sent) == 1                                                                       # the second uses the plain opening
 

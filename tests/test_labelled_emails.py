@@ -157,7 +157,7 @@ class FakeOllama:
         return {"message": {"content": self.answer}}
 
 
-AI = normalise({"summary": {"backend": "ollama"}, "llm": {"url": "http://127.0.0.1:1"}})
+AI = normalise({"summary": {"backend": "ollama"}, "llm": {"url": "http://127.0.0.1:1"}, "watchlist": {"plot_ai": True}})
 
 
 def test_with_ai_a_long_description_becomes_a_few_spoiler_free_sentences(monkeypatch):
@@ -195,3 +195,107 @@ def test_old_80_mm_templates_move_to_30_once_and_your_own_choice_is_kept():
     assert old["templates"]["reminder"]["min_height_mm"] == 30 and old["templates"]["message"]["min_height_mm"] == 55 and old["migrations"]["min_height_30"] is True
     again = normalise({**old, "templates": {**old["templates"], "reminder": {**old["templates"]["reminder"], "min_height_mm": 80}}})
     assert again["templates"]["reminder"]["min_height_mm"] == 80                                  # you chose 80 after the move: it stays
+
+
+# ----------------------------------------------------------------------------- speed: the slow steps are off, the connection is kept, offline doesn't stall
+def test_the_slow_ai_steps_are_off_by_default_and_the_inbox_is_checked_every_5_seconds():
+    assert (CFG["pinkpanther"]["ai_plot"], CFG["watchlist"]["plot_ai"], CFG["watchlist"]["ai"], CFG["email"]["poll_seconds"]) == (False, False, False, 5)
+
+
+def test_an_older_saved_config_is_moved_to_the_fast_settings_once(tmp_path):
+    import json
+    from app.config import ConfigStore
+    path = tmp_path / "c.json"
+    path.write_text(json.dumps({"email": {"poll_seconds": 30}, "pinkpanther": {"ai_plot": True}, "watchlist": {"plot_ai": True, "ai": True}}))
+    c = ConfigStore(path)
+    assert (c.data["email"]["poll_seconds"], c.data["pinkpanther"]["ai_plot"], c.data["watchlist"]["plot_ai"], c.data["watchlist"]["ai"]) == (5, False, False, False)
+    d = c.data
+    d["pinkpanther"]["ai_plot"], d["email"]["poll_seconds"] = True, 20                 # you switch the AI back on and choose 20 s
+    c.replace(d)
+    c2 = ConfigStore(path)
+    assert c2.data["pinkpanther"]["ai_plot"] is True and c2.data["email"]["poll_seconds"] == 20     # not changed again
+
+
+def test_an_email_that_describes_itself_never_waits_for_the_internet(monkeypatch):
+    calls = []
+    monkeypatch.setattr(pp, "FETCH", lambda url, timeout=12: calls.append(url) or {"error": {"code": "x"}})
+    cards_for("Movie/Show: The Pink Phink\nDescription: The Pink Panther paints a house pink while a little man keeps painting it blue.")
+    assert calls == []
+
+
+def test_after_the_internet_fails_the_next_lookups_are_skipped_for_a_couple_of_minutes(monkeypatch):
+    import time
+    calls = []
+
+    def boom(url, timeout=5):
+        calls.append(url)
+        raise OSError("timed out")
+
+    monkeypatch.setattr(pp, "fetch_json", boom)
+    monkeypatch.setattr(pp, "FETCH", boom)
+    monkeypatch.setattr(pp, "_DOWN_UNTIL", 0.0)
+    pp.fetch_details({"title": "Pink Ice"}, CFG)
+    n = len(calls)
+    assert n >= 1 and pp._DOWN_UNTIL > time.time()
+    pp.fetch_details({"title": "Pinknic"}, CFG)
+    assert len(calls) == n                                                                    # skipped: no second wait
+    monkeypatch.setattr(pp, "_DOWN_UNTIL", 0.0)
+
+
+class KeptIMAP:
+    """A fake mailbox that counts logins and can drop the connection."""
+    logins = 0
+
+    def __init__(self, *a, **k):
+        KeptIMAP.logins += 1
+        self.dead = False
+        self.noops = 0
+
+    def login(self, u, p):
+        return "OK", [b""]
+
+    def select(self, folder, readonly=False):
+        return "OK", [b"0"]
+
+    def noop(self):
+        if self.dead:
+            import imaplib
+            raise imaplib.IMAP4.abort("socket error: EOF")
+        self.noops += 1
+        return "OK", [b""]
+
+    def uid(self, cmd, *args):
+        return "OK", [b""]
+
+    def logout(self):
+        return "BYE", [b""]
+
+
+def test_the_running_poller_keeps_one_connection_and_logs_in_again_only_if_it_drops(tmp_path, monkeypatch):
+    from app.config import ConfigStore
+    from app.mailbox import MailPoller
+    import app.mailbox as mailbox
+    from app.service import Service
+    cfg = ConfigStore(tmp_path / "c.json")
+    d = cfg.data
+    d["printer"]["backend"] = "dummy"
+    d["email"].update(username="printer@gmail.com", password="x", enabled=True)
+    cfg.replace(d)
+    svc = Service(cfg, tmp_path)
+    poller = MailPoller(cfg, svc)
+    made = []
+    monkeypatch.setattr(mailbox.imaplib, "IMAP4_SSL", lambda *a, **k: made.append(KeptIMAP()) or made[-1])
+    KeptIMAP.logins = 0
+    for _ in range(4):
+        poller.poll_once(keep=True)
+    assert KeptIMAP.logins == 1 and made[0].noops == 3                                          # one login, then quick checks
+    made[0].dead = True                                                                       # the server hung up
+    poller.poll_once(keep=True)
+    assert KeptIMAP.logins == 2 and len(made) == 2                                            # logged in again, once, and carried on
+    poller.poll_once()                                                                         # a normal one-off check still opens its own connection
+    assert KeptIMAP.logins == 3
+    d = cfg.data
+    d["email"]["password"] = "changed"
+    cfg.replace(d)
+    poller.poll_once(keep=True)
+    assert KeptIMAP.logins == 4                                                                # new account details: a new connection

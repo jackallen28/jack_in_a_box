@@ -229,7 +229,11 @@ class Service:
                         (now, job["id"]))
         self.printer_error = ""
         self.last_print = now
-        log.info("Printed #%s '%s'", job["id"], job["title"])
+        try:
+            waited = (datetime.fromisoformat(now) - datetime.fromisoformat(job["created"])).total_seconds()
+        except (ValueError, TypeError, KeyError):
+            waited = 0
+        log.info("Printed #%s '%s' (%.0fs after it was queued)", job["id"], job["title"], waited)
         info = {"id": job["id"], "kind": job["kind"], "title": job["title"], "source": job["source"], "printed_at": now}
         plugins.on_printed(info)
         self._webhook(info)

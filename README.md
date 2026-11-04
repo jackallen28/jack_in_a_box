@@ -526,6 +526,22 @@ The Pi reads these by their labels, whatever the subject says, and **combs them 
 * A bare `Title:` / `Name:` / `Episode:` label is only trusted when the subject says "watch list" (or similar), so a work email with a "Title:" line is left alone.
 * `Watch list` settings: *Print a short plot line* and *Let the AI condense a long description* (the AI only ever sees the description, and everything it says must come from it).
 
+## Why a slip can take minutes, and what makes it instant
+
+From "sent" to paper there are four steps, and only one is slow by nature:
+
+1. **Gmail to the Pi:** the Pi keeps one connection to the inbox open and checks every **5 seconds** (Email tab, *Check every*; it used to log in afresh every 30 s), so this is a few seconds.
+2. **Reading and drawing the slip:** well under a second to a couple of seconds on a Pi 3B+.
+3. **Printing:** the printer's own speed.
+4. **Anything that waits for the AI or the internet:** this is where minutes come from. The small AI model on a Pi 3B+ takes **1-3 minutes per answer** (it is unloaded after each one to free the RAM).
+   So **Pink Panther "AI plot overview", Watch list "condense a long description" and "find the titles in a long email" are OFF by default**, and the first two are not needed for emails that carry their own
+   `Description:` (the opening sentences are used). An email that already describes the episode no longer waits for the internet either; an email that doesn't tries it with a 5-second limit, and after one failure
+   skips it for 2 minutes. Switch the AI options back on in the Pink Panther / Watch list tabs if you prefer nicer wording over speed. A *forwarded* email with AI summaries on is still slow, because summarising is the
+   AI's job.
+
+Your older saved settings were moved to these faster ones once (a change you make afterwards is kept). The log shows where the time went: `journalctl -u jack-in-a-box -n 30` has lines like
+`Email 'Watch list' -> 1 slip(s) queued in 0.4s (reading 0.0s, building 0.1s, drawing 0.3s)` and `Printed #12 'Dune' (3s after it was queued)`.
+
 ## Power, cooling and the email mailbox
 
 **What it costs to run:** a Pi 3B+ idles around 2-3 W, roughly 20-25 kWh a year, which is about **$6-9 a year** at ~30c/kWh. The printer only

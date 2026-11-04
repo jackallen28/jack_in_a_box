@@ -162,7 +162,7 @@ DEFAULTS: dict = {
         "username": "",
         "password": "",
         "folder": "INBOX",
-        "poll_seconds": 30,
+        "poll_seconds": 5,          # how often the inbox is checked over one kept-open connection (a check is one quick round trip)
         "after": "delete",     # delete | mark_read | move   (delete = Gmail Trash, kept 30 days)
         "trash_folder": "[Gmail]/Trash",   # blank on non-Gmail providers = delete for good
         "move_folder": "Printed",
@@ -252,7 +252,7 @@ DEFAULTS: dict = {
         "enabled": True,
         "lookup": True,             # search the internet for the plot and an exact release date; off = only the season/episode from the built-in list
         "details": True,            # read the episode's own page (Pink Panther Wiki, then Wikipedia) for its plot text and release date
-        "ai_plot": True,            # with AI mode on, the local AI writes the 2-4 sentence spoiler-free plot overview (else the opening of the plot text)
+        "ai_plot": False,           # with AI mode on, the local AI writes the 2-4 sentence spoiler-free plot overview (else the opening of the plot text). OFF: on a Pi each one takes minutes
         "max_ai_plots": 3,          # at most this many AI overviews per message (each takes a minute or two on a Pi); the rest use the opening of the plot
         "show_image": True,         # the hand-drawn Pink Panther picture at the top
         "style": "shaded",          # shaded (outline + light stipple fill) | outline (clean line art)
@@ -262,9 +262,9 @@ DEFAULTS: dict = {
     "watchlist": {
         "enabled": True,
         "symbol": "action",         # the symbol at the top: a name or tag from the Symbols page (your own "action" symbol wins over the built-in clapperboard)
-        "ai": True,                 # with AI mode on, the local AI also picks the titles out of a long, chatty email (each title must appear in the text)
+        "ai": False,                # with AI mode on, the local AI also picks the titles out of a long, chatty email (each title must appear in the text). OFF: on a Pi it takes minutes
         "plot": True,               # a short PLOT line from the email's own "Description:" (2-3 sentences; director, cast, themes are never printed)
-        "plot_ai": True,            # with AI mode on, the local AI condenses a long description into 2-4 spoiler-free sentences (else the opening sentences)
+        "plot_ai": False,           # with AI mode on, the local AI condenses a long description into 2-4 spoiler-free sentences (else the opening sentences). OFF: on a Pi it takes minutes
         "max_titles": 5,            # at most this many titles (a slip each) from one message
     },
     # Share the receipt printer on your network as an AirPrint / IPP Everywhere printer (see app/airprint.py)
@@ -377,6 +377,22 @@ class ConfigStore:
         self._data: dict = {}
         self.load()
 
+    @staticmethod
+    def _fast_prints(saved: dict) -> bool:
+        """Once, for a config saved by an older version: check the inbox every 5 s (was 30) and don't make slips wait for the slow AI plot step
+        (you can switch those back on).  Returns True if it changed anything."""
+        mig = saved.setdefault("migrations", {})
+        if mig.get("fast_prints"):
+            return False
+        e = saved.get("email")
+        if isinstance(e, dict) and e.get("poll_seconds") in (30, 60):
+            e["poll_seconds"] = 5
+        for section, key in (("pinkpanther", "ai_plot"), ("watchlist", "plot_ai"), ("watchlist", "ai")):
+            if isinstance(saved.get(section), dict):
+                saved[section][key] = False
+        mig["fast_prints"] = True
+        return True
+
     def load(self) -> None:
         with self._lock:
             saved = {}
@@ -389,8 +405,9 @@ class ConfigStore:
                         self.path.rename(self.path.with_suffix(".json.broken"))
                     except OSError:
                         pass
+            migrated = bool(saved) and self._fast_prints(saved)
             self._data = normalise(saved)
-            if not self.path.exists():
+            if not self.path.exists() or migrated:
                 self.save()
 
     @property

@@ -5,6 +5,7 @@ import hashlib
 import imaplib
 import logging
 import threading
+import time
 from datetime import datetime
 
 from .config import ConfigStore
@@ -28,13 +29,14 @@ class MailPoller(threading.Thread):
     def run(self):
         while not self.svc.stop.is_set():
             e = self.cfg.data["email"]
-            wait = max(10, int(e.get("poll_seconds", 30)))
+            wait = max(3, int(e.get("poll_seconds", 5)))
             if e.get("enabled") and e.get("username") and e.get("password"):
                 try:
-                    self.poll_once()
+                    self.poll_once(keep=True)                    # one connection, kept open: a check is one quick round trip, not a new login
                     self.status.update(state="ok", error="")
                     self._fail_logged = False
                 except Exception as ex:
+                    self._drop()
                     msg = f"{type(ex).__name__}: {ex}"
                     self.status.update(state="error", error=msg)
                     if not self._fail_logged:
@@ -42,6 +44,7 @@ class MailPoller(threading.Thread):
                         self._fail_logged = True
                     wait = min(300, wait * 2)
             else:
+                self._drop()
                 self.status["state"] = "disabled"
             self.kick.wait(wait)
             self.kick.clear()
@@ -52,16 +55,55 @@ class MailPoller(threading.Thread):
         imap.login(e["username"], e["password"])
         return imap
 
-    def poll_once(self) -> int:
+    # A kept connection (used by the running poller): reused for up to KEEP_SECONDS, dropped on any error or when the account settings change.
+    KEEP_SECONDS = 15 * 60
+    _kept = None
+    _kept_key: tuple = ()
+    _kept_at = 0.0
+
+    def _drop(self) -> None:
+        imap, self._kept = self._kept, None
+        if imap is not None:
+            try:
+                imap.logout()
+            except Exception:
+                pass
+
+    def _open(self, keep: bool):
+        """(connection, was it just opened?)"""
         e = self.cfg.data["email"]
+        key = (e.get("host"), e.get("port"), e.get("username"), e.get("password"), e.get("folder"))
+        if keep and self._kept is not None and key == self._kept_key and time.time() - self._kept_at < self.KEEP_SECONDS:
+            return self._kept, False
+        self._drop()
         imap = self.connect()
-        done = 0
-        try:
+        if keep:
+            self._kept, self._kept_key, self._kept_at = imap, key, time.time()
+        return imap, True
+
+    def _unseen(self, imap, fresh: bool) -> list:
+        e = self.cfg.data["email"]
+        if fresh:
             typ, _ = imap.select(e.get("folder") or "INBOX")
             if typ != "OK":
                 raise RuntimeError(f"Cannot open folder {e.get('folder')!r}")
-            typ, data = imap.uid("SEARCH", None, "UNSEEN")
-            uids = data[0].split() if typ == "OK" and data and data[0] else []
+        else:
+            imap.noop()                                          # lets the server show mail that arrived since the last check
+        typ, data = imap.uid("SEARCH", None, "UNSEEN")
+        return data[0].split() if typ == "OK" and data and data[0] else []
+
+    def poll_once(self, keep: bool = False) -> int:
+        imap, fresh = self._open(keep)
+        try:
+            try:
+                uids = self._unseen(imap, fresh)
+            except (imaplib.IMAP4.abort, OSError):
+                if fresh:
+                    raise
+                self._drop()                                     # the server closed a kept connection: log in again, once
+                imap, fresh = self._open(keep)
+                uids = self._unseen(imap, fresh)
+            done = 0
             for uid in uids[:25]:
                 typ, msgdata = imap.uid("FETCH", uid, "(BODY.PEEK[])")
                 raw = next((p[1] for p in msgdata if isinstance(p, tuple)), b"") if typ == "OK" else b""
@@ -76,11 +118,15 @@ class MailPoller(threading.Thread):
                     log.warning("Ignored an email larger than %d MB", MAX_BYTES // 1048576)
                 self._finish(imap, uid, outcome)
                 done += 1
+        except Exception:
+            self._drop()
+            raise
         finally:
-            try:
-                imap.logout()
-            except Exception:
-                pass
+            if not keep:
+                try:
+                    imap.logout()
+                except Exception:
+                    pass
         self.status["last_check"] = datetime.now().strftime("%d %b %H:%M:%S")
         return done
 
@@ -117,6 +163,7 @@ class MailPoller(threading.Thread):
         Sets ``self.last_outcome``: printed | held | duplicate | blocked | spoofed | dropped | empty.
         Only printed / held / duplicate emails may be deleted afterwards."""
         self.last_outcome = "empty"
+        t0 = time.perf_counter()
         self.svc.touch()
         c = self.cfg.data
         inc = parse(raw, min_image_px=int(c["email"].get("min_image_px", 150)),
@@ -153,9 +200,14 @@ class MailPoller(threading.Thread):
             self.status["processed"] += 1
             self.last_outcome = "dropped" if dropped else "empty" if card is None else "held" if hold else "printed"
             return ids
+        t1 = time.perf_counter()
         cards, copies = build_cards(inc, c)
+        t2 = time.perf_counter()
         for card in cards:
             ids += self.svc.submit(card, copies)
+        log.info("Email '%s' -> %d slip(s) queued in %.1fs (reading %.1fs, building %.1fs, drawing %.1fs)", (inc.subject or "")[:30], len(cards), time.perf_counter() - t0,
+                 t1 - t0, t2 - t1, time.perf_counter() - t2)
+        self.status["last_seconds"] = round(time.perf_counter() - t0, 1)
         self.svc.db.execute("INSERT INTO seen VALUES (?,?,?,?)", (key, now, "ok", f"{len(cards)} cards"))
         self.status["processed"] += 1
         self.last_outcome = "printed" if cards else "empty"

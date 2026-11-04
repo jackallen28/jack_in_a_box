@@ -122,7 +122,7 @@ SECTIONS = {
         F("email.password", "Password", "password",
           "For Gmail this must be an App Password (Google Account > Security > 2-Step Verification > App passwords), not your normal password."),
         F("email.folder", "Folder to watch"),
-        F("email.poll_seconds", "Check every (seconds)", "number", min=10, max=3600),
+        F("email.poll_seconds", "Check every (seconds)", "number", "One connection is kept open, so a check is quick: 5 seconds means an email prints within a few seconds of arriving.", min=3, max=3600),
         F("email.after", "After printing an email", "select", options=opts(
             ("delete", "Delete it (Gmail: moved to Trash, which empties itself after 30 days)"),
             ("mark_read", "Mark as read and keep it"), ("move", "Move to a folder"))),
@@ -242,16 +242,16 @@ SECTIONS = {
     "watchlist": [
         F("watchlist.enabled", "Recognise movies and TV shows to watch", "bool", "A message with a movie or TV show to watch prints as a WATCH LIST slip (one per title) with the ACTION symbol at the top. Use “watch list” (or movie, film, TV, series) in the subject, or write things like “watch Dune (2021)” or “Severance season 2” in the message. Pink Panther episodes keep their own slip."),
         F("watchlist.symbol", "Symbol at the top", "text", "A symbol name or tag from the Symbols page. Default: action (the clapperboard; if you draw your own symbol called “action” it is used instead)."),
-        F("watchlist.ai", "Let the AI find the titles in a long email", "bool", "Needs AI mode switched on (Text & sorting). Every title it picks must appear in your text, so it can't invent one."),
+        F("watchlist.ai", "Let the AI find the titles in a long email", "bool", "SLOW on a Raspberry Pi (a minute or more). Needs AI mode switched on (Text & sorting). Every title it picks must appear in your text, so it can't invent one."),
         F("watchlist.plot", "Print a short plot line from the email's description", "bool", "Emails written as “Movie Name: … Description: … Release Date: …” give the title, the release date or year and 2-3 sentences of plot. Director, cast, themes and other extras are never printed."),
-        F("watchlist.plot_ai", "Let the AI condense a long description", "bool", "Needs AI mode switched on. 2-4 spoiler-free sentences, checked so it can't make things up; otherwise the opening sentences are used."),
+        F("watchlist.plot_ai", "Let the AI condense a long description", "bool", "SLOW on a Raspberry Pi (a minute or more before the slip prints; leave off for instant prints). Needs AI mode switched on. 2-4 spoiler-free sentences, checked so it can't make things up; otherwise the opening sentences are used."),
         F("watchlist.max_titles", "Most slips from one message", "number", "Normally an email names one movie or show. If it names several, each gets its own slip, up to this many.", min=1, max=20),
     ],
     "pinkpanther": [
         F("pinkpanther.enabled", "Recognise Pink Panther episodes in messages", "bool", "A message about a Pink Panther episode prints as a PINK PANTHER slip with the picture, the real title, season, date, episode number and a short plot overview."),
         F("pinkpanther.lookup", "Search the internet for the plot and release date", "bool", "The season and episode number come from the built-in list and need no internet. Off = no plot and no exact date."),
         F("pinkpanther.details", "Read the episode's own page for its plot", "bool", "Pink Panther Wiki first, then Wikipedia. An episode with no page simply has no plot line."),
-        F("pinkpanther.ai_plot", "Let the AI write the plot overview", "bool", "Needs AI mode switched on (Text & sorting). 2-4 spoiler-free sentences, checked so it can't make things up; if the AI is off or fails, the opening of the plot text is used instead."),
+        F("pinkpanther.ai_plot", "Let the AI write the plot overview", "bool", "SLOW on a Raspberry Pi (a minute or more before the slip prints; leave off for instant prints). Needs AI mode switched on (Text & sorting). 2-4 spoiler-free sentences, checked so it can't make things up; if the AI is off or fails, the opening of the plot text is used instead."),
         F("pinkpanther.max_ai_plots", "Most AI plot overviews from one message", "number", "Each can take a minute or two on a Pi (and is kept for next time).", min=0, max=10),
         F("pinkpanther.show_image", "Print the Pink Panther picture", "bool"),
         F("pinkpanther.style", "Picture style", "select", options=opts(("shaded", "Outline with a light shaded fill (looks like the colour drawing)"), ("outline", "Clean outline only"))),

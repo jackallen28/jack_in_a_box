@@ -990,7 +990,7 @@ Text from the screenshot: `;
       mine.length ? h("div", { class: "small" }, "Emails are printed only from these addresses: ", h("strong", {}, mine.join(", ")),
           ". Your iPhone's Mail account address must be on this list (Email tab → “Who can email the printer?”); anything else is ignored.")
         : h("div", { style: "color:var(--warn)" }, "⚠ No sender is allowed yet: add the address your iPhone sends mail from under Email → “Who can email the printer?”, or nothing will print."),
-      h("div", { class: "small muted" }, `The printer checks its inbox about every ${info.poll_seconds || 30} seconds, so a reminder prints a moment after you send it. It works from anywhere (mobile data, any Wi-Fi): nothing to do with your home network.`));
+      h("div", { class: "small muted" }, `The printer checks its inbox about every ${info.poll_seconds || 5} seconds, so a reminder prints a moment after you send it. It works from anywhere (mobile data, any Wi-Fi): nothing to do with your home network.`));
     recipes.replaceChildren(
       h("div", { class: "card" }, h("h3", {}, "Shortcut 1: a phrase becomes a reminder (Apple Intelligence tidies it)"),
         h("p", { class: "small muted" }, "Run it from Siri (“Hey Siri, remind the printer”), the Action Button, or a Home Screen icon."),
@@ -1028,7 +1028,7 @@ Text from the screenshot: `;
         h("ul", { class: "small" },
           h("li", {}, "Nothing printed: check the sender address is allowed (above) and open the Dashboard's log: “Ignored email from …” means it isn't."),
           h("li", {}, "Send Email needs a mail account in the iPhone's Mail app; it sends from that account. “Hide My Email” or another alias address won't be recognised."),
-          h("li", {}, "Slow? The printer only looks every ", String(info.poll_seconds || 30), " seconds (Email tab → check every)."),
+          h("li", {}, "Slow? The printer only looks every ", String(info.poll_seconds || 5), " seconds (Email tab → check every)."),
           h("li", {}, "Prefer a direct call over your home Wi-Fi instead of email? The HTTP print API still exists (Integrations tab), but email works everywhere with no address to remember."),
           h("li", {}, "I wrote these steps from how Shortcuts works but couldn't run them on a real iPhone, and Apple renames actions between iOS versions. If a step doesn't match what you see, tell me and I'll adjust."))));
   }

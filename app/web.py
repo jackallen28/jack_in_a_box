@@ -775,7 +775,7 @@ def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button, 
         return jsonify(enabled=bool(ic.get("api_enabled")), token_set=bool(ic.get("api_token")), url=request.host_url.rstrip("/") + "/api/print",
                        symbols=[x["name"] for x in icon_lib.numbered(cfg.data) if x["enabled"]],
                        inbox=(e.get("username") or "").strip(), allowed_senders=[str(x) for x in e.get("allowed_senders", [])],
-                       poll_seconds=int(e.get("poll_seconds", 30)))
+                       poll_seconds=int(e.get("poll_seconds", 5)))
 
     @app.post("/api/shortcuts-token")
     def shortcuts_token():

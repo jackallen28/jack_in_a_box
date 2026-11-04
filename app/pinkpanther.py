@@ -23,6 +23,7 @@ import json
 import logging
 import re
 import threading
+import time
 import urllib.parse
 import urllib.request
 from dataclasses import replace
@@ -48,13 +49,15 @@ CONTEXT_WORDS = re.compile(r"\b(episodes?|cartoons?|shorts?|shows?|season|series
 ACCEPT, CLEAR_LEAD = 0.62, 0.05
 _lock = threading.RLock()
 LAST_PROBLEM = ""                                   # why the last online lookup failed (for the settings page)
+_DOWN_UNTIL = 0.0                                   # after a failed online lookup: don't try again for a couple of minutes (each try can take seconds)
+DOWN_SECONDS = 120
 
 
 class LookupError_(Exception):
     """An online lookup failed; the message is for the person."""
 
 
-def fetch_json(url: str, timeout: float = 12) -> dict:
+def fetch_json(url: str, timeout: float = 5) -> dict:
     """GET a JSON document.  (Replaced in tests, so nothing there touches the network.)"""
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -273,13 +276,16 @@ def _remember(key: str, path: Path | None, **values) -> None:
 def fetch_details(ep: dict, cfg: dict, path: Path | None = None, fetch=None) -> dict:
     """The plot text and release date from the web: the Pink Panther Wiki (Fandom) page named like the short, else Wikipedia.
     Cached per title (including "nothing found"), so a short is looked up once."""
-    global LAST_PROBLEM
+    global LAST_PROBLEM, _DOWN_UNTIL
     path = path or CACHE_FILE
     key = norm(ep["title"])
     with _lock:
         cached = _load(path).get("details", {}).get(key)
         if cached is not None:
             return cached
+    real = fetch is None and FETCH is fetch_json
+    if real and time.time() < _DOWN_UNTIL:
+        return {}                                                     # the internet was down a moment ago: print now rather than wait for it again
     result: dict = {}
     try:
         try:
@@ -299,6 +305,8 @@ def fetch_details(ep: dict, cfg: dict, path: Path | None = None, fetch=None) -> 
         LAST_PROBLEM = ""
     except Exception as e:
         LAST_PROBLEM = f"{type(e).__name__}: {e}"
+        if real:
+            _DOWN_UNTIL = time.time() + DOWN_SECONDS
         log.info("No online details for %r (%s)", ep["title"], LAST_PROBLEM)
         return {}                                                     # don't remember a network failure as "nothing exists"
     _remember(key, path, **result)
@@ -659,7 +667,7 @@ def build_records(inc, cfg: dict, now: datetime, path, fetch, recs: list, strong
         if key in seen:
             continue
         seen.add(key)
-        details = dict(fetch_details(ep, cfg, path, fetch)) if (ep and lookup) else {}
+        details = dict(fetch_details(ep, cfg, path, fetch)) if (ep and lookup and not r.desc) else {}      # the email already describes it: no waiting for the internet
         if not details.get("release") and r.date:
             details["release"] = r.date
         elif not details.get("release") and not ep and r.year:

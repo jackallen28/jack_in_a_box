@@ -166,7 +166,7 @@ class FakeOllama:
         return {"message": {"content": self.answer}}
 
 
-AI_CFG = normalise({"summary": {"backend": "ollama"}, "llm": {"url": "http://127.0.0.1:1"}})
+AI_CFG = normalise({"summary": {"backend": "ollama"}, "llm": {"url": "http://127.0.0.1:1"}, "watchlist": {"ai": True}})
 CHATTY = "Hi Jack,\n\nThe kids have been on about the new Pixar one, and my brother says Heat holds up well. Also we finally saw oppenheimer last week.\n\nThanks,\nSam"
 
 
