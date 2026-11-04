@@ -959,82 +959,85 @@ function airprintPage(main) {
 }
 
 
-/* ---------------------------------------------------------------- iPhone Shortcuts: send reminders / screenshots from the phone */
+/* ---------------------------------------------------------------- iPhone Shortcuts: by EMAIL (works anywhere, no IP address) */
 function shortcutsPage(main) {
   const box = (text, rows = 4) => { const t = h("textarea", { readonly: true, style: `min-height:${rows * 22}px;font-family:ui-monospace,monospace;font-size:.78rem` }); t.value = text;
     return h("div", { class: "f" }, t, h("div", { class: "row" }, h("button", { class: "btn small", onclick: () => copyFrom(t) }, "Copy"))); };
-  const setup = h("div", { class: "small" });
-  let symbols = "school, work, money, home, health, car, pet, holiday, fun, phone, shopping, birthday, calendar";
+  const top = h("div", {}), recipes = h("div", {});
+  let tags = "[school] [work] [money] [home] [health] [car] [pet] [holiday] [fun] [phone] [shopping] [birthday] [calendar]";
 
-  async function show(regenerate) {
-    const r = await api("/api/shortcuts-token", { method: "POST", json: { regenerate: !!regenerate } });
-    CFG.integrations.api_enabled = true; SAVED.integrations.api_enabled = true; CFG.integrations.api_token = r.token; SAVED.integrations.api_token = r.token;
-    setup.replaceChildren(
-      h("div", { style: "color:var(--ok);font-weight:600" }, "Ready. The print API is switched on."),
-      h("div", { class: "f" }, h("label", { class: "l" }, "Web address (the phone uses this)"), box(r.url, 1)),
-      h("div", { class: "f" }, h("label", { class: "l" }, "Your secret token (keep it private; it goes in the shortcut's header)"), box("Bearer " + r.token, 1)),
-      h("div", { class: "row" }, h("button", { class: "btn small danger", onclick: () => { if (confirm("Make a new token? Every shortcut must be updated with it.")) show(true); } }, "Make a new token")),
-      h("div", { class: "small muted" }, "Test from a computer: ", h("code", {}, `curl -X POST ${r.url} -H "Authorization: Bearer ${r.token}" -H "Content-Type: application/json" -d '{"text":"Test from curl"}'`)));
-  }
-  api("/api/shortcuts").then(r => {
-    if (r.symbols && r.symbols.length) symbols = r.symbols.map(x => x.toLowerCase()).join(", ");
-    if (r.enabled && r.token_set) show(false); else setup.replaceChildren(h("div", {}, "Not switched on yet. Press the button to turn on the print API and get your token."));
-    drawRecipes();
-  });
-  const recipes = h("div", {});
-  const prompt1 = () => `Turn the phrase below into a short reminder for a receipt printer. Reply with ONLY a JSON object, no other words:
-{"heading": "<2 to 5 word title>", "text": "<the reminder in one clear sentence; keep any day or time exactly as said>", "symbols": "<0 to 2 names from: ${symbols}>"}
-Use an empty string for symbols unless one clearly fits.
+  const prompt1 = () => `You prepare an email that a receipt printer will print as a reminder. Reply with ONLY a JSON object, no other words:
+{"subject": "<up to 2 symbol tags, then a title of 2 to 5 words>", "body": "<the reminder in one clear sentence; keep any day or time exactly as said>"}
+Rules for the subject:
+- A symbol tag is one of these, in square brackets: ${tags}. Example subject: "[money] Pay school fees". Use a tag only when it clearly fits, otherwise none. Never invent a tag.
+- If the phrase is a note for someone else to read (it starts with "tell", "message" or "note for"), put [message] first in the subject, e.g. "[message] Back by six".
 
 Phrase: `;
-  const prompt2 = () => `Below is text read from a screenshot or photo. Work out what I should be reminded of, or the message it contains. Reply with ONLY a JSON object, no other words:
-{"heading": "<2 to 5 word title>", "text": "<the reminder or message in 1 to 3 short sentences; keep names, dates, times, amounts and places exactly as written>", "symbols": "<0 to 2 names from: ${symbols}>"}
-Use an empty string for symbols unless one clearly fits.
+  const prompt2 = () => `Below is text read from a screenshot or photo. Work out what I should be reminded of, or the message it contains, and prepare an email that a receipt printer will print. Reply with ONLY a JSON object, no other words:
+{"subject": "<up to 2 symbol tags, then a title of 2 to 5 words>", "body": "<the reminder or message in 1 to 3 short sentences; keep names, dates, times, amounts and places exactly as written>"}
+Rules for the subject:
+- A symbol tag is one of these, in square brackets: ${tags}. Example subject: "[health] Dentist Tuesday 3pm". Use a tag only when it clearly fits, otherwise none. Never invent a tag.
+- If it is a message from a person to me rather than something to do, put [message] first in the subject.
 
 Text from the screenshot: `;
-  function drawRecipes() {
+
+  function draw(info) {
+    const inbox = info.inbox || "";
+    const mine = info.allowed_senders || [];
+    top.replaceChildren(
+      inbox ? h("div", { class: "f" }, h("label", { class: "l" }, "Send the email to (the printer's own inbox)"), box(inbox, 1))
+            : h("div", { style: "color:var(--warn)" }, "⚠ The printer's email account isn't set up yet: fill in the Email tab first. That address is where the shortcut sends its email."),
+      mine.length ? h("div", { class: "small" }, "Emails are printed only from these addresses: ", h("strong", {}, mine.join(", ")),
+          ". Your iPhone's Mail account address must be on this list (Email tab → “Who can email the printer?”); anything else is ignored.")
+        : h("div", { style: "color:var(--warn)" }, "⚠ No sender is allowed yet: add the address your iPhone sends mail from under Email → “Who can email the printer?”, or nothing will print."),
+      h("div", { class: "small muted" }, `The printer checks its inbox about every ${info.poll_seconds || 30} seconds, so a reminder prints a moment after you send it. It works from anywhere (mobile data, any Wi-Fi): nothing to do with your home network.`));
     recipes.replaceChildren(
       h("div", { class: "card" }, h("h3", {}, "Shortcut 1: a phrase becomes a reminder (Apple Intelligence tidies it)"),
-        h("p", { class: "small muted" }, "You can talk to it too: “Hey Siri, remind the printer”, or put it on the Action Button or a Home Screen icon."),
+        h("p", { class: "small muted" }, "Run it from Siri (“Hey Siri, remind the printer”), the Action Button, or a Home Screen icon."),
         h("ol", { class: "small" },
           h("li", {}, "Shortcuts app → + → name it “Remind the printer”."),
           h("li", {}, h("strong", {}, "Ask for Input"), " (or ", h("strong", {}, "Dictate Text"), "): prompt “What should I remind you of?”, type Text."),
-          h("li", {}, h("strong", {}, "Use Model"), " → Model: ", h("strong", {}, "On-Device"), " (private, instant) or ", h("strong", {}, "Private Cloud Compute"), " (smarter). Paste this prompt, then tap at the end of it and insert the ", h("strong", {}, "Provided Input"), " variable (the Ask for Input result). If the action offers an output type, pick ", h("strong", {}, "Dictionary"), "; if not, leave it as Text and add the next step:")),
-        box(prompt1(), 7),
+          h("li", {}, h("strong", {}, "Use Model"), " → ", h("strong", {}, "On-Device"), " (private, instant) or ", h("strong", {}, "Private Cloud Compute"), " (smarter). Paste this prompt, then tap at the end of it and insert the ", h("strong", {}, "Provided Input"), " (the Ask for Input result). If it offers an output type pick ", h("strong", {}, "Dictionary"), "; if not leave Text and add the next step:")),
+        box(prompt1(), 9),
         h("ol", { class: "small", start: 4 },
-          h("li", {}, "(Only if the model's answer is Text) ", h("strong", {}, "Get Dictionary from Input"), " on the Use Model result."),
-          h("li", {}, h("strong", {}, "Get Contents of URL"), ": URL = the web address above; ", h("strong", {}, "Show More"), " → Method ", h("strong", {}, "POST"), "; Headers: ", h("code", {}, "Authorization"), " = ", h("code", {}, "Bearer YOUR-TOKEN"), " (copy it from above); Request Body ", h("strong", {}, "JSON"), " with fields: ",
-            h("code", {}, "text"), " (Text) = the dictionary's ", h("em", {}, "text"), " value, ", h("code", {}, "heading"), " = its ", h("em", {}, "heading"), " value, ", h("code", {}, "symbols"), " = its ", h("em", {}, "symbols"), " value, ", h("code", {}, "kind"), " = ", h("code", {}, "reminder"), " (or ", h("code", {}, "message"), ")."),
-          h("li", {}, h("strong", {}, "Show Notification"), " “Sent to the printer”. Run it: a reminder prints within seconds.")),
-        h("p", { class: "small muted" }, "No Apple Intelligence step is needed to try it: skip steps 3 and 4 and send just ", h("code", {}, "text"), " = the Ask for Input result. The box already fixes spelling, splits several tasks into separate reminders and turns “tomorrow 5pm” into a DUE line. The AI step is for turning rambling dictation into a clean headline, text and symbol.")),
-      h("div", { class: "card" }, h("h3", {}, "Shortcut 2: share a screenshot or photo and it prints the reminder"),
-        h("p", { class: "small muted" }, "Yes, this works: Shortcuts can appear in the Share Sheet. Screenshot something, tap the preview, Share → “Print this screenshot” (or Photos → Share). Apple Intelligence reads the text in the picture and decides what the reminder is."),
-        h("ol", { class: "small" },
-          h("li", {}, "Shortcuts app → + → name it “Print this screenshot”. Tap ⓘ (details) → switch on ", h("strong", {}, "Show in Share Sheet"), " → Share Sheet Types: keep ", h("strong", {}, "Images"), " only."),
-          h("li", {}, h("strong", {}, "Extract Text from Image"), " (on-device text recognition) on ", h("strong", {}, "Shortcut Input"), "."),
-          h("li", {}, "(Optional) ", h("strong", {}, "Choose from Menu"), ": “Reminder / Message”, and use the choice as ", h("code", {}, "kind"), " below (message = a MESSAGE slip with the time it was sent)."),
-          h("li", {}, h("strong", {}, "Use Model"), " (On-Device or Private Cloud Compute). Paste this prompt and insert the ", h("strong", {}, "Text from Image"), " variable at the end; output ", h("strong", {}, "Dictionary"), " if offered:")),
-        box(prompt2(), 7),
-        h("ol", { class: "small", start: 5 },
-          h("li", {}, h("strong", {}, "Get Contents of URL"), ": same address and header as shortcut 1, Method ", h("strong", {}, "POST"), ", Request Body ", h("strong", {}, "Form"), " with fields ", h("code", {}, "text"), ", ", h("code", {}, "heading"), ", ", h("code", {}, "symbols"), ", ", h("code", {}, "kind"),
-            " (Text, from the model's dictionary) and a ", h("strong", {}, "File"), " field named ", h("code", {}, "images"), " = ", h("strong", {}, "Shortcut Input"), " (prints the screenshot under the reminder; leave this field out for text only)."),
+          h("li", {}, "(Only if the answer is Text) ", h("strong", {}, "Get Dictionary from Input"), " on the Use Model result."),
+          h("li", {}, h("strong", {}, "Send Email"), ": Recipient = the printer's inbox above; Subject = the dictionary's ", h("em", {}, "subject"), " value; Message = its ", h("em", {}, "body"), " value. Tap ", h("strong", {}, "Show More"), " and switch ", h("strong", {}, "Show Compose Sheet"), " OFF so it sends by itself."),
           h("li", {}, h("strong", {}, "Show Notification"), " “Sent to the printer”.")),
-        h("p", { class: "small muted" }, "Apple's own models read text, not pictures, so the steps above go via the text in the image: private and on the phone. If you want the AI to actually look at the picture (a photo, a handwritten note), choose ", h("strong", {}, "ChatGPT"), " as the model in Use Model and attach Shortcut Input; that sends the image to OpenAI, so only use it for things you're happy to share.")),
-      h("div", { class: "card" }, h("h3", {}, "What the phone can send"),
-        h("table", { class: "small" },
-          ...[["text", "the reminder or message (tidied up, split into tasks, dates become DUE)"], ["heading", "optional bold heading"], ["kind", "reminder (default) · message · plain (print exactly as written)"],
-              ["from", "optional “from” name: MESSAGE says “from Jack”, a reminder gets a “From Jack” line"], ["symbols", `optional, up to a few of: ${symbols}`],
-              ["images", "a picture file (form) or image_base64 (JSON), printed under the text; screenshots, photos and HEIC all work"], ["urgent / copies / template", "as on the Print page"]]
-            .map(([k, v]) => h("tr", {}, h("td", { style: "padding:2px 10px 2px 0" }, h("code", {}, k)), h("td", {}, v)))),
-        h("p", { class: "small muted" }, "The answer is JSON like ", h("code", {}, '{"ok": true, "message": "Sent 1 printout to the printer"}'), "; Shortcuts can show the ", h("em", {}, "message"), " value. Errors say what's wrong (e.g. wrong token).")),
+        h("p", { class: "small muted" }, "Quick version with no Apple Intelligence: skip steps 3 and 4 and send the Ask for Input text as the email's Subject. You can type the tags yourself, e.g. ", h("code", {}, "[money] pay school fees friday"), ".")),
+      h("div", { class: "card" }, h("h3", {}, "Shortcut 2: share a screenshot or photo and it prints the reminder"),
+        h("p", { class: "small muted" }, "Yes, this works: Shortcuts can appear in the Share Sheet. Screenshot something, tap the preview, Share → “Print this screenshot” (or Photos → Share)."),
+        h("ol", { class: "small" },
+          h("li", {}, "Shortcuts app → + → name it “Print this screenshot”. Tap ⓘ → switch on ", h("strong", {}, "Show in Share Sheet"), " → Share Sheet Types: keep ", h("strong", {}, "Images"), " only."),
+          h("li", {}, h("strong", {}, "Extract Text from Image"), " on ", h("strong", {}, "Shortcut Input"), " (reads the text on the phone)."),
+          h("li", {}, h("strong", {}, "Use Model"), " (On-Device or Private Cloud Compute): paste this prompt, insert the ", h("strong", {}, "Text from Image"), " at the end; output ", h("strong", {}, "Dictionary"), " if offered:")),
+        box(prompt2(), 9),
+        h("ol", { class: "small", start: 4 },
+          h("li", {}, "(Only if the answer is Text) ", h("strong", {}, "Get Dictionary from Input"), "."),
+          h("li", {}, h("strong", {}, "Send Email"), ": Recipient = the printer's inbox; Subject = ", h("em", {}, "subject"), "; Message = ", h("em", {}, "body"), ", then add ", h("strong", {}, "Shortcut Input"), " to the message too (this attaches the screenshot, which prints under the reminder; leave it out for text only). ", h("strong", {}, "Show Compose Sheet"), " OFF."),
+          h("li", {}, h("strong", {}, "Show Notification"), " “Sent to the printer”.")),
+        h("p", { class: "small muted" }, "Apple's own models read text, not pictures, so the steps go via the text in the image: private and on the phone. To have the AI look at the picture itself (a photo, handwriting) choose ", h("strong", {}, "ChatGPT"), " as the model and attach Shortcut Input; that sends the image to OpenAI. A tall screenshot is scaled to fit the slip: raise the picture height under Templates → Pictures if it comes out small.")),
+      h("div", { class: "card" }, h("h3", {}, "Tags you can put in the subject or text"),
+        h("table", { class: "small" }, ...[
+          ["[school] [money] [3D printer] ...", "the stock symbols from your library, by name (the Symbols tab lists them); they print above the heading"],
+          ["[message]", "print it as a MESSAGE slip, “from <your name>” with the time it was sent, instead of a reminder"],
+          ["[from Mum]", "who it's from: on a message it replaces your name; on a reminder it adds a “From Mum” line"],
+          ["[plain]", "print exactly as written, as one printout (no splitting into tasks)"]]
+          .map(([k, v]) => h("tr", {}, h("td", { style: "padding:2px 12px 2px 0;vertical-align:top" }, h("code", {}, k)), h("td", {}, v)))),
+        h("p", { class: "small muted" }, "Words in the usual way still work: “tomorrow 5pm” becomes a DUE line, several tasks become separate reminders. A tag that isn't in the library (a misspelt symbol) is printed as plain text, not lost.")),
       h("div", { class: "card" }, h("h3", {}, "If it doesn't work"),
         h("ul", { class: "small" },
-          h("li", {}, "The phone must be on the same Wi-Fi as the Pi (or on a VPN such as Tailscale when you're out). The first time, allow Shortcuts to find devices on the local network."),
-          h("li", {}, "If ", h("code", {}, "jack-in-a-box.local"), " isn't found, use the Pi's number address instead (shown on the Dashboard)."),
-          h("li", {}, "“unauthorised” = the header is wrong: it must read exactly ", h("code", {}, "Bearer "), " followed by the token."),
+          h("li", {}, "Nothing printed: check the sender address is allowed (above) and open the Dashboard's log: “Ignored email from …” means it isn't."),
+          h("li", {}, "Send Email needs a mail account in the iPhone's Mail app; it sends from that account. “Hide My Email” or another alias address won't be recognised."),
+          h("li", {}, "Slow? The printer only looks every ", String(info.poll_seconds || 30), " seconds (Email tab → check every)."),
+          h("li", {}, "Prefer a direct call over your home Wi-Fi instead of email? The HTTP print API still exists (Integrations tab), but email works everywhere with no address to remember."),
           h("li", {}, "I wrote these steps from how Shortcuts works but couldn't run them on a real iPhone, and Apple renames actions between iOS versions. If a step doesn't match what you see, tell me and I'll adjust."))));
   }
-  main.append(h("div", { class: "card" }, h("h2", {}, "iPhone Shortcuts"),
-    h("p", { class: "small" }, "Send reminders and messages to the printer from your iPhone: type or say a phrase, or share a screenshot or photo. Apple Intelligence (on your iPhone 15 Pro) can tidy the wording first. The shortcut posts to this box over your home Wi-Fi."),
-    setup, h("div", { class: "row", style: "margin-top:8px" }, h("button", { class: "btn primary", onclick: () => show(false) }, "Switch on and show my token"))), recipes);
+
+  main.append(h("div", { class: "card" }, h("h2", {}, "iPhone Shortcuts (by email)"),
+    h("p", { class: "small" }, "Send reminders and messages to the printer from your iPhone: type or say a phrase, or share a screenshot or photo. Apple Intelligence (on your iPhone 15 Pro) tidies the wording and picks a symbol from your library, then the shortcut simply ",
+      h("strong", {}, "emails"), " the printer's inbox, so it works anywhere."), top), recipes);
+  api("/api/shortcuts").then(info => {
+    if (info.symbols && info.symbols.length) tags = info.symbols.map(x => `[${x.toLowerCase()}]`).join(" ");
+    draw(info);
+  });
 }

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 import logging
+from dataclasses import replace
 from datetime import datetime, timezone
 from email.utils import parseaddr
 from zoneinfo import ZoneInfo
@@ -268,6 +269,43 @@ def plain_card(inc: Incoming, cfg: dict, now: datetime, *, kind: str = "reminder
                 vars={"name": name, "date": now.strftime("%a %d %b")})
 
 
+_DIRECTIVE = re.compile(r"\[\s*(?:(message|msg)|(plain|exact|as written)|from\s+([^\]\n]{1,60}?))\s*\]", re.I)
+
+
+def apply_directives(inc: Incoming) -> tuple[Incoming, str | None, str]:
+    """Look for the little control tags you can put in an email's subject or text:
+         [message]   print it as a MESSAGE slip (with "from <you>" and the time it was sent)
+         [plain]     print it exactly as written, as one printout (no splitting into tasks)
+         [from Jack] who it's from: a MESSAGE says "from Jack", a reminder gets a "From Jack" line
+    Returns (the email without those tags, "message" | "plain" | None, the from name)."""
+    mode, from_name = None, ""
+
+    def take(m):
+        nonlocal mode, from_name
+        if m.group(1):
+            mode = "message"
+        elif m.group(2):
+            mode = mode or "plain"
+        else:
+            from_name = re.sub(r"\s+", " ", m.group(3)).strip()
+        return ""
+
+    def clean(t: str) -> str:
+        if "[" not in (t or ""):
+            return t
+        out = _DIRECTIVE.sub(take, t)
+        if out != t:
+            out = re.sub(r"[ \t]{2,}", " ", out)
+            out = re.sub(r"[ \t]+\n", "\n", out)
+            out = re.sub(r"\n{3,}", "\n\n", out).strip(" \t\n")
+        return out
+
+    subject, body = clean(inc.subject), clean(inc.body)
+    if mode is None and not from_name:
+        return inc, None, ""
+    return replace(inc, subject=subject, body=body), mode, from_name
+
+
 def sent_text(when: datetime, cfg: dict) -> str:
     """"Sent Tue 3 Nov, 10:15 AM" - in your timezone and your 12/24-hour setting."""
     from .dates import fmt_time
@@ -279,6 +317,7 @@ def message_card(inc: Incoming, friend: dict, cfg: dict, now: datetime | None = 
     """A MESSAGE slip.  Its send time is printed on it: ``when`` (e.g. a form's schedule-send time), else the email's own date, else now."""
     m = cfg["messages"]
     tpl = m.get("template") or "message"
+    inc, _mode, _from = apply_directives(inc)                      # a "[message]" tag in the text isn't printed
     card = plain_card(inc, cfg, now or local_now(cfg), kind="message",
                       template=tpl if tpl in cfg["templates"] else "message",
                       name=friend.get("name") or friend.get("email", ""), tidy=m.get("tidy_text", False))
@@ -297,7 +336,23 @@ def build_cards(inc: Incoming, cfg: dict, now: datetime | None = None,
                 split: bool | None = None, use_ai: bool = True) -> tuple[list[Card], int]:
     """Return (cards, copies_each)."""
     now = now or local_now(cfg)
-    cards = [email_card(inc, cfg, now, use_ai)] if inc.forwarded is not None else reminder_cards(inc, cfg, now, split)
+    mode, from_name = None, ""
+    if inc.forwarded is None:
+        inc, mode, from_name = apply_directives(inc)                 # [message] / [plain] / [from Jack] typed in the email
+    if inc.forwarded is not None:
+        cards = [email_card(inc, cfg, now, use_ai)]
+    elif mode == "message":
+        who = from_name or inc.sender_name or (inc.sender_addr.split("@")[0] if inc.sender_addr else "") or "me"
+        card = message_card(inc, {"name": who, "email": inc.sender_addr}, cfg, now)
+        cards = [card] if card else []
+    elif mode == "plain":
+        card = plain_card(inc, cfg, now, kind="reminder")
+        cards = [card] if card else []
+    else:
+        cards = reminder_cards(inc, cfg, now, split)
+    if from_name and mode != "message":
+        for c in cards:
+            c.stamp = f"From {from_name}"
     ctx_fields = {"sender": f"{inc.sender_name} <{inc.sender_addr}>", "subject": inc.subject,
                   "body": inc.body, "has_image": bool(inc.images), "is_forward": inc.forwarded is not None}
     res = rules.evaluate(cfg.get("rules", []), ctx_fields)

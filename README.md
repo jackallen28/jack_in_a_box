@@ -422,33 +422,33 @@ and a lock makes sure it never mixes with another printout.
   accepts computers on your own network. Epson's status monitor can't see paper-out or cover-open through this box (it only forwards the data), and a driver that insists on two-way
   status may complain. I couldn't test with a real Mac and Epson's driver, only with simulated drivers sending ESC/POS data, so tell me what you see.
 
-## iPhone Shortcuts: send a phrase, or a shared screenshot, to the printer
+## iPhone Shortcuts: send a phrase, or a shared screenshot, to the printer (by email)
 
-The **iPhone Shortcuts** tab switches on the print API, shows your web address and secret token (with Copy buttons), and has step-by-step recipes, with the Apple Intelligence
-prompts ready to paste, for two shortcuts:
+The shortcuts simply **send an email to the printer's inbox**, so they work from anywhere (mobile data, any Wi-Fi): no IP address, no Wi-Fi requirement, no token. The **iPhone Shortcuts** tab
+shows the inbox address to copy, tells you whether your iPhone's address is allowed, and has step-by-step recipes with Apple Intelligence prompts ready to paste:
 
-1. **"Remind the printer"**: you type or dictate a phrase (also "Hey Siri, remind the printer", or the Action Button). A *Use Model* step (Apple Intelligence, on-device or Private Cloud
-   Compute) turns it into `{heading, text, symbols}`, and a *Get Contents of URL* step posts it to the box. The box already tidies spelling, splits several tasks and turns "tomorrow 5pm" into a DUE
-   line, so the AI step is optional (without it, just send the phrase as `text`).
-2. **"Print this screenshot"**: it appears in the **Share Sheet** for images (screenshot preview -> Share, or Photos -> Share). *Extract Text from Image* reads the screenshot on the phone, *Use Model*
-   decides what the reminder or message is, and the shortcut posts it (and, if you like, the screenshot itself, which prints under the reminder). Apple's own models read text rather than pictures, so this
-   goes via the text in the image. If you want the AI to look at the picture itself (a photo, handwriting), choose *ChatGPT* as the model in *Use Model*; that sends the image to OpenAI.
+1. **"Remind the printer"**: type or dictate a phrase ("Hey Siri, remind the printer", the Action Button, a Home Screen icon). *Use Model* (Apple Intelligence, on-device or Private Cloud Compute)
+   turns it into a finished **subject** (up to 2 stock-symbol tags from your library, then a short title) and a **body**; *Send Email* (Show Compose Sheet off) sends it. A note for someone
+   ("tell...", "message...") gets a `[message]` tag. Without the AI step you can just send your own text, with the tags typed yourself.
+2. **"Print this screenshot"**: it shows in the **Share Sheet** for images (screenshot preview -> Share, or Photos -> Share). *Extract Text from Image* reads the screenshot on the phone,
+   *Use Model* works out the reminder or message, and *Send Email* sends it with the screenshot attached, which prints under the text. Apple's own models read text, not pictures, so this goes
+   via the text in the image. To have the AI look at the picture itself, choose *ChatGPT* as the model in *Use Model*; that sends the image to OpenAI.
 
-The API is `POST /api/print` with the header `Authorization: Bearer <token>`; send JSON or a form (a form can include picture files):
+What the email can contain (tags go in the subject or the text and are removed before printing):
 
-| Field | Meaning |
+| Tag | Result |
 |---|---|
-| `text` | the reminder or message (spelling fixed, several tasks split, dates -> DUE) |
-| `heading` | optional bold heading |
-| `kind` | `reminder` (default), `message` (a MESSAGE slip showing when it was sent) or `plain` (printed exactly as written) |
-| `from` | optional "from" name: a message says "from Jack"; a reminder gets a "From Jack" line |
-| `symbols` | optional, names or numbers: `school, money` (unknown ones are reported back, not fatal) |
-| `images` | picture file(s) in a form (also `image`/`file`), or `image_base64` / `images_base64` in JSON: up to 4, printed under the text; screenshots, photos and HEIC |
-| `urgent`, `copies`, `template` | as on the Print page (copies at most 5) |
+| `[school] [money] [3D printer] ...` | the stock symbols of your library, by name (every name on the Symbols tab works), printed above the heading. A name not in the library is printed as plain text |
+| `[message]` | a MESSAGE slip, "from <your name>", with the time it was sent, instead of a reminder |
+| `[from Mum]` | who it's from: replaces your name on a message; adds a "From Mum" line to a reminder |
+| `[plain]` | printed exactly as written, as one printout (no splitting into tasks) |
 
-The answer is JSON such as `{"ok": true, "message": "Sent 1 printout to the printer"}`; mistakes get a clear `error` (wrong token = 401, nothing to print = 400, queue full = 429, over 20 MB = 413).
-The phone must be on your home Wi-Fi (or a VPN such as Tailscale when you're out); the first run asks to let Shortcuts find devices on the local network. I couldn't run Shortcuts here, so
-the recipes follow how it works but action names can differ between iOS versions; tell me if a step doesn't match what you see.
+Everything else works as for any email from you: spelling fixed, several tasks split, "tomorrow 5pm" becomes a DUE line, an attached screenshot prints under the text.
+**Requirements:** the address your iPhone's Mail app sends from must be on the *Who can email the printer?* list (anything else is ignored; "Hide My Email" aliases won't match), and the printer's Gmail account
+set up as usual. The printer looks at the inbox about every 30 seconds (adjustable under Email), so a reminder prints a moment after you send it. I couldn't run Shortcuts here, so the recipes follow how it
+works, but Apple renames actions between iOS versions; tell me if a step doesn't match what you see.
+
+The HTTP print API (`POST /api/print` with a token, Integrations tab; it also accepts forms, pictures, `kind`, `from` and `symbols`) is still there for Zapier, Home Assistant or a script on your own network.
 
 ## Power, cooling and the email mailbox
 
