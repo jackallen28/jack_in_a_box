@@ -239,6 +239,16 @@ SECTIONS = {
         F("power.min_uptime_minutes", "Never power off in the first (minutes after boot)", "number", min=5, max=600),
         F("power.keep_awake_before_calendar_hours", "Stay on if a calendar reminder prints within (hours)", "number", min=0, max=72),
     ],
+    "pinkpanther": [
+        F("pinkpanther.enabled", "Recognise Pink Panther episodes in messages", "bool", "A message about a Pink Panther episode prints as a PINK PANTHER slip with the picture and the episode's real name, release date, director and so on."),
+        F("pinkpanther.lookup", "Search the internet (Wikipedia) for the episode", "bool", "Off = the slip shows what you wrote under the picture and never goes online."),
+        F("pinkpanther.details", "Also read the episode's own article", "bool", "Adds director, running time and a one-line summary when the episode has an article. Anything not found is left off."),
+        F("pinkpanther.show_image", "Print the Pink Panther picture", "bool"),
+        F("pinkpanther.style", "Picture style", "select", options=opts(("shaded", "Outline with a light shaded fill (looks like the colour drawing)"), ("outline", "Clean outline only"))),
+        F("pinkpanther.max_episodes", "Most episodes from one message", "number", min=1, max=20),
+        F("pinkpanther.cache_days", "Check for a new episode list every (days)", "number", "The list is downloaded once and kept on the Pi.", min=1, max=365),
+        F("pinkpanther.pages", "Wikipedia pages with episode lists", "lines", "One page title per line. Add more if you know a list that also has DVD volumes; columns called Volume, Season/Series, Director, Release date and so on are picked up automatically."),
+    ],
     "airprint": [
         F("airprint.enabled", "Share the printer on my network (AirPrint)", "bool", "Phones, tablets, Macs, Windows PCs and Android devices on your network will see the printer and can print to it."),
         F("airprint.name", "Printer name shown on devices", help="e.g. Jack in a Box"),

@@ -10,7 +10,7 @@ from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageEnhance, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
 from .config import APP_DIR, DATA_DIR
 from .models import Card, Section
@@ -208,10 +208,40 @@ def block_title(card: Card, tpl: dict, w: int) -> Image.Image | None:
     return img
 
 
+ASSET_DIR = APP_DIR / "assets"
+
+
+def builtin_graphic(name: str, max_w: int, max_h: int, style: str = "shaded", align: str = "center") -> Image.Image | None:
+    """Artwork that ships with the app, prepared for a thermal printer at exactly the width it will print.
+
+    "shaded"  crisp black outlines and whiskers, the colour fill as a light stipple (reads as a coloured cartoon)
+    "outline" clean line art only: outlines in black, everything else white"""
+    path = ASSET_DIR / f"{name}.png"
+    try:
+        src = Image.open(path)
+        src.load()
+    except Exception:
+        return None
+    scale = min(max_w / src.width, max_h / src.height)
+    g = src.convert("L").resize((max(1, int(src.width * scale)), max(1, int(src.height * scale))), Image.LANCZOS)
+    g = g.filter(ImageFilter.UnsharpMask(radius=1.2, percent=140, threshold=2))       # keep thin whiskers alive after shrinking
+    if style == "outline":
+        g = g.point(lambda p: 255 if p > 150 else 0)
+    else:
+        g = g.point(lambda p: 0 if p < 110 else (255 if p >= 215 else int(150 + (p - 110) * 0.55)))
+    g = g.convert("1").convert("L")                                                  # Floyd-Steinberg turns the fill into stipple
+    canvas = Image.new("L", (max_w, g.height), 255)
+    canvas.paste(g, (_x_for(align, max_w, g.width), 0))
+    return canvas
+
+
 def block_graphic(card: Card, tpl: dict, w: int) -> Image.Image | None:
     c = tpl["graphic"]
-    if not c.get("enabled") or not c.get("file"):
+    if not c.get("enabled") or not c.get("file") or card.vars.get("graphic") == "off":
         return None
+    if str(c["file"]).startswith("builtin:"):
+        return builtin_graphic(c["file"][8:], w, mm(c.get("max_height_mm", 25)), card.vars.get("graphic_style") or c.get("style", "shaded"),
+                               c.get("align", "center"))
     im = load_upload(c["file"])
     if im is None:
         return None

@@ -68,7 +68,7 @@ $("#logout").addEventListener("click", async () => { await api("/api/logout", { 
 
 /* ---------------------------------------------------------------- tabs */
 const TABS = [
-  ["dashboard", "Dashboard"], ["print", "Print"], ["form", "Google Form"], ["airprint", "AirPrint"], ["shortcuts", "iPhone Shortcuts"], ["messages", "Messages"], ["symbols", "Symbols"], ["power", "Power & fan"], ["templates", "Templates"], ["email", "Email"], ["calendar", "Calendar"],
+  ["dashboard", "Dashboard"], ["print", "Print"], ["form", "Google Form"], ["airprint", "AirPrint"], ["shortcuts", "iPhone Shortcuts"], ["pinkpanther", "Pink Panther"], ["messages", "Messages"], ["symbols", "Symbols"], ["power", "Power & fan"], ["templates", "Templates"], ["email", "Email"], ["calendar", "Calendar"],
   ["text", "Text & sorting"], ["aireview", "AI review"], ["rules", "Rules"], ["printer", "Printer"], ["integrations", "Integrations"],
   ["playground", "Try it"], ["account", "Account"],
 ];
@@ -79,7 +79,7 @@ function renderTabs() {
 function go(tab) {
   TAB = tab; clearInterval(POLL); POLL = null; renderTabs();
   const main = $("#main"); main.replaceChildren();
-  ({ dashboard, print: printPage, form: formPage, airprint: airprintPage, shortcuts: shortcutsPage, aireview: aiReviewPage, messages, symbols, power: powerPage, templates, email: () => simple("email", "Email account"), calendar, text: () => simple("text", "Text, dates & summaries"),
+  ({ dashboard, print: printPage, form: formPage, airprint: airprintPage, shortcuts: shortcutsPage, pinkpanther: pinkPantherPage, aireview: aiReviewPage, messages, symbols, power: powerPage, templates, email: () => simple("email", "Email account"), calendar, text: () => simple("text", "Text, dates & summaries"),
      rules, printer: () => simple("printer", "Printer"), integrations, playground, account }[tab])(main);
   window.scrollTo(0, 0);
 }
@@ -1040,4 +1040,40 @@ Text from the screenshot: `;
     if (info.symbols && info.symbols.length) tags = info.symbols.map(x => `[${x.toLowerCase()}]`).join(" ");
     draw(info);
   });
+}
+
+
+/* ---------------------------------------------------------------- Pink Panther episodes */
+function pinkPantherPage(main) {
+  const status = h("div", { class: "small" }), result = h("div", { class: "small", style: "margin-top:8px;white-space:pre-wrap" });
+  const input = h("textarea", { placeholder: "e.g.\nThe Pink Phink\nPink Ice 1965", style: "min-height:90px" });
+  async function refresh() {
+    const s = await api("/api/pinkpanther");
+    status.replaceChildren(...[
+      h("div", { style: `font-weight:600;color:${s.enabled ? "var(--ok)" : "var(--muted)"}` }, s.enabled ? "Pink Panther episodes are ON." : "Switched off (tick the first box below, then Save)."),
+      h("div", {}, s.cached ? `Episode list: ${s.cached} episodes kept on the Pi (downloaded ${s.fetched.replace("T", " ")}).` : "Episode list: not downloaded yet. It is fetched the first time a message needs it, or press “Refresh” below."),
+      s.last_problem ? h("div", { style: "color:var(--warn)" }, "⚠ Last lookup problem: " + s.last_problem) : null,
+      ...(s.problems || []).map(p => h("div", { style: "color:var(--warn)" }, "⚠ " + p))].filter(Boolean));
+  }
+  refresh(); POLL = setInterval(() => refresh().catch(() => {}), 8000);
+  const run = async print => {
+    result.textContent = "Looking it up…"; result.style.color = "";
+    const r = await api("/api/pinkpanther-test", { method: "POST", json: { q: input.value, print } });
+    result.textContent = r.cards.length ? r.cards.map(c => `${c.heading}\n${c.text}`).join("\n\n— — —\n\n") + (r.printed ? "\n\n(Sent to the printer.)" : "")
+      : "That wouldn't be treated as a Pink Panther episode (it needs to mention an episode or a title I can match).";
+    result.style.color = ""; refresh();
+  };
+  main.append(h("div", { class: "card" }, h("h2", {}, "Pink Panther episodes"),
+    h("p", { class: "small" }, "Note the episodes you want to watch and send them to the printer as a message or email (subject “Pink Panther”, one episode per line). Each one prints as a ",
+      h("strong", {}, "PINK PANTHER"), " slip with your hand-drawn picture, the episode's real name, and whatever the Pi can find on the internet: release date, episode number, series, volume, director and so on. Anything it can't find is simply left off."),
+    h("p", { class: "small" }, "It only names an episode when it's ", h("strong", {}, "confident"), " the match is right, using what you wrote and the rest of the message (a year, a director, a volume). If it isn't sure, the slip shows what you wrote and “Did you mean …” instead of guessing."),
+    status));
+  main.append(h("div", { class: "card" }, h("h3", {}, "Try it"),
+    h("div", { class: "small muted" }, "Type what you'd put in a message. This is how the Pi will read it."), input,
+    h("div", { class: "row", style: "margin-top:6px" },
+      h("button", { class: "btn primary", onclick: () => run(false) }, "Look it up"),
+      h("button", { class: "btn", onclick: () => run(true) }, "Look up and print"),
+      h("button", { class: "btn small", onclick: async () => { result.textContent = "Downloading the episode list…"; const r = await api("/api/pinkpanther-refresh", { method: "POST" }); result.textContent = r.message; result.style.color = r.ok ? "var(--ok)" : "var(--bad)"; refresh(); } }, "Refresh the episode list now")),
+    result));
+  main.append(h("div", { class: "card" }, h("h3", {}, "Settings"), form(SCHEMA.sections.pinkpanther)));
 }

@@ -18,7 +18,7 @@ APP_DIR = Path(__file__).resolve().parent
 ROOT = APP_DIR.parent
 DATA_DIR = Path(os.environ.get("JACK_IN_A_BOX_DATA", ROOT / "data"))
 
-BUILTIN_TEMPLATES = ("reminder", "calendar", "email", "message")
+BUILTIN_TEMPLATES = ("reminder", "calendar", "email", "message", "pinkpanther")
 
 KIND_DEFAULTS = {
     "reminder": {
@@ -38,6 +38,12 @@ KIND_DEFAULTS = {
         "title": "MESSAGE",
         "subtitle": "from {name}",
         "order": ["title", "icons", "heading", "body", "images", "footer"],
+    },
+    "pinkpanther": {
+        "label": "Pink Panther episode",
+        "title": "PINK PANTHER",
+        "subtitle": "",
+        "order": ["title", "graphic", "heading", "body", "footer"],
     },
     "email": {
         "label": "Email summary",
@@ -80,9 +86,9 @@ def default_template(kind: str = "reminder") -> dict:
             "align": "center",
         },
         "graphic": {
-            "enabled": kind == "calendar",
-            "file": "",
-            "max_height_mm": 25,
+            "enabled": kind in ("calendar", "pinkpanther"),
+            "file": "builtin:pink_panther" if kind == "pinkpanther" else "",
+            "max_height_mm": 30 if kind == "pinkpanther" else 25,
             "align": "center",
             "dither": "floyd",
         },
@@ -96,7 +102,7 @@ def default_template(kind: str = "reminder") -> dict:
         },
         "body": {
             "font": "courier-prime",
-            "size_pt": 11,
+            "size_pt": 10 if kind == "pinkpanther" else 11,
             "align": "left",
             "box": "single",
             "box_width_pt": 1.0,
@@ -234,6 +240,17 @@ DEFAULTS: dict = {
         "timezone": "",             # timezone of the "Schedule Send" answers; blank = the one Google reports for the sheet
         "treat_as": "admin",        # admin: every form row is YOU - prints straight away | by_sender: use the verified email
         "unknown_policy": "hold",   # (by_sender only) someone not on your lists: hold (wait for the button) | print | ignore
+    },
+    # Messages about the Pink Panther: look the episode up on Wikipedia and print its real name, date, director ... (app/pinkpanther.py)
+    "pinkpanther": {
+        "enabled": True,
+        "lookup": True,             # search the internet (Wikipedia) for the episode; off = print what you wrote under the picture
+        "details": True,            # also read the episode's own Wikipedia article (director, running time, a summary line)
+        "show_image": True,         # the hand-drawn Pink Panther picture at the top
+        "style": "shaded",          # shaded (outline + light stipple fill) | outline (clean line art)
+        "max_episodes": 8,          # at most this many episodes from one message
+        "cache_days": 30,           # how long to keep the downloaded episode list before checking again
+        "pages": ["List of The Pink Panther cartoons"],   # Wikipedia pages with episode tables (add more if you know a list that has volumes)
     },
     # Share the receipt printer on your network as an AirPrint / IPP Everywhere printer (see app/airprint.py)
     "airprint": {

@@ -18,7 +18,7 @@ from flask import Flask, Response, jsonify, request, send_file, send_from_direct
 from PIL import Image, ImageOps
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from . import aifeedback, icons as icon_lib, llm, plugins, schema, sheet as sheet_mod
+from . import aifeedback, icons as icon_lib, llm, pinkpanther, plugins, schema, sheet as sheet_mod
 from .config import APP_DIR, DATA_DIR, ROOT, KIND_DEFAULTS, ConfigStore, default_template, merge
 from .mailbox import MailPoller
 from .mailparse import Incoming, _load_image, parse
@@ -719,6 +719,43 @@ def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button, 
         if bad_syms:
             out["ignored_symbols"] = bad_syms
         return jsonify(out)
+
+    # ------------------------------------------------------------------ Pink Panther episodes
+    def _pp_state():
+        data = pinkpanther._load(pinkpanther.CACHE_FILE)
+        return {"enabled": bool(cfg.data["pinkpanther"].get("enabled")), "lookup": bool(cfg.data["pinkpanther"].get("lookup")),
+                "cached": len(data.get("episodes", [])), "fetched": data.get("fetched", ""), "pages": data.get("pages", []),
+                "problems": data.get("problems", []), "last_problem": pinkpanther.LAST_PROBLEM}
+
+    @app.get("/api/pinkpanther")
+    def pp_status():
+        return jsonify(_pp_state())
+
+    @app.post("/api/pinkpanther-refresh")
+    def pp_refresh():
+        """Download the episode list now (and say plainly if that didn't work)."""
+        try:
+            pinkpanther.get_index(cfg.data, force=True)
+        except Exception as e:
+            return jsonify(ok=False, message=str(e) if isinstance(e, pinkpanther.LookupError_) else f"{type(e).__name__}: {e}", **_pp_state())
+        s = _pp_state()
+        return jsonify(ok=True, message=f"Downloaded {s['cached']} episodes.", **s)
+
+    @app.post("/api/pinkpanther-test")
+    def pp_test():
+        """Try a message exactly as it would be handled: shows what was found; ``print`` also queues the slips."""
+        b = request.json or {}
+        text = str(b.get("q", ""))[:2000]
+        now = local_now(cfg.data)
+        inc = Incoming(subject="Pink Panther", body=text, sender_addr="web")
+        cards, _rest = pinkpanther.build(inc, cfg.data, now)
+        out = [{"heading": c.heading, "text": "\n".join(s.text for s in c.sections if s.text), "found": "RELEASED" in "\n".join(s.text for s in c.sections)
+                or "EPISODE" in "\n".join(s.text for s in c.sections)} for c in cards]
+        if b.get("print") and cards:
+            for c in cards:
+                c.source = "web"
+                svc.submit(c, 1)
+        return jsonify(cards=out, printed=bool(b.get("print") and cards), **_pp_state())
 
     @app.get("/api/shortcuts")
     def shortcuts_info():

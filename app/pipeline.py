@@ -12,7 +12,7 @@ from . import icons as icon_lib, llm, plugins, rules
 from .dates import fmt_when
 from .mailparse import Incoming
 from .models import Card, Section
-from . import aifeedback, autosymbols, emailclean
+from . import aifeedback, autosymbols, emailclean, pinkpanther
 from .focus import detect_image_mode, find_focus, parse_focus
 from .summarise import bullets as extractive_bullets
 from .summarise import finish, overview_and_actions, prepare_thread
@@ -349,7 +349,11 @@ def build_cards(inc: Incoming, cfg: dict, now: datetime | None = None,
         card = plain_card(inc, cfg, now, kind="reminder")
         cards = [card] if card else []
     else:
-        cards = reminder_cards(inc, cfg, now, split)
+        cards, rest = [], inc
+        if mode is None:                                              # a message about a Pink Panther episode: look it up
+            cards, rest = pinkpanther.build(inc, cfg, now)
+        if rest is not None:
+            cards += reminder_cards(rest, cfg, now, split)
     if from_name and mode != "message":
         for c in cards:
             c.stamp = f"From {from_name}"
