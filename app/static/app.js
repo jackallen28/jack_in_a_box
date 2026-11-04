@@ -68,7 +68,7 @@ $("#logout").addEventListener("click", async () => { await api("/api/logout", { 
 
 /* ---------------------------------------------------------------- tabs */
 const TABS = [
-  ["dashboard", "Dashboard"], ["print", "Print"], ["form", "Google Form"], ["airprint", "AirPrint"], ["messages", "Messages"], ["symbols", "Symbols"], ["power", "Power & fan"], ["templates", "Templates"], ["email", "Email"], ["calendar", "Calendar"],
+  ["dashboard", "Dashboard"], ["print", "Print"], ["form", "Google Form"], ["airprint", "AirPrint"], ["shortcuts", "iPhone Shortcuts"], ["messages", "Messages"], ["symbols", "Symbols"], ["power", "Power & fan"], ["templates", "Templates"], ["email", "Email"], ["calendar", "Calendar"],
   ["text", "Text & sorting"], ["aireview", "AI review"], ["rules", "Rules"], ["printer", "Printer"], ["integrations", "Integrations"],
   ["playground", "Try it"], ["account", "Account"],
 ];
@@ -79,7 +79,7 @@ function renderTabs() {
 function go(tab) {
   TAB = tab; clearInterval(POLL); POLL = null; renderTabs();
   const main = $("#main"); main.replaceChildren();
-  ({ dashboard, print: printPage, form: formPage, airprint: airprintPage, aireview: aiReviewPage, messages, symbols, power: powerPage, templates, email: () => simple("email", "Email account"), calendar, text: () => simple("text", "Text, dates & summaries"),
+  ({ dashboard, print: printPage, form: formPage, airprint: airprintPage, shortcuts: shortcutsPage, aireview: aiReviewPage, messages, symbols, power: powerPage, templates, email: () => simple("email", "Email account"), calendar, text: () => simple("text", "Text, dates & summaries"),
      rules, printer: () => simple("printer", "Printer"), integrations, playground, account }[tab])(main);
   window.scrollTo(0, 0);
 }
@@ -956,4 +956,85 @@ function airprintPage(main) {
       h("li", {}, "Use: ", h("strong", {}, "Select Software…"), " → choose the ", h("strong", {}, "EPSON TM-T82II"), " driver (not “AirPrint”). Add. Set the paper size and cutter in the printer's Options.")),
     h("p", { class: "small muted" }, "Windows works the same way: Epson's driver with a Standard TCP/IP port to the Pi's address and port 9100 (raw). The driver can't read the printer's status lamps through this box, so Epson's status monitor won't show paper-out."),
     h("p", { class: "small muted" }, "Only devices on your own network can print (turn that off in Settings at your own risk). It's plain IPP, not encrypted, which is fine on a home network. I built this without a real iPhone/Mac/PC to test against, so if one doesn't find it or prints oddly, tell me which and what happened.")));
+}
+
+
+/* ---------------------------------------------------------------- iPhone Shortcuts: send reminders / screenshots from the phone */
+function shortcutsPage(main) {
+  const box = (text, rows = 4) => { const t = h("textarea", { readonly: true, style: `min-height:${rows * 22}px;font-family:ui-monospace,monospace;font-size:.78rem` }); t.value = text;
+    return h("div", { class: "f" }, t, h("div", { class: "row" }, h("button", { class: "btn small", onclick: () => copyFrom(t) }, "Copy"))); };
+  const setup = h("div", { class: "small" });
+  let symbols = "school, work, money, home, health, car, pet, holiday, fun, phone, shopping, birthday, calendar";
+
+  async function show(regenerate) {
+    const r = await api("/api/shortcuts-token", { method: "POST", json: { regenerate: !!regenerate } });
+    CFG.integrations.api_enabled = true; SAVED.integrations.api_enabled = true; CFG.integrations.api_token = r.token; SAVED.integrations.api_token = r.token;
+    setup.replaceChildren(
+      h("div", { style: "color:var(--ok);font-weight:600" }, "Ready. The print API is switched on."),
+      h("div", { class: "f" }, h("label", { class: "l" }, "Web address (the phone uses this)"), box(r.url, 1)),
+      h("div", { class: "f" }, h("label", { class: "l" }, "Your secret token (keep it private; it goes in the shortcut's header)"), box("Bearer " + r.token, 1)),
+      h("div", { class: "row" }, h("button", { class: "btn small danger", onclick: () => { if (confirm("Make a new token? Every shortcut must be updated with it.")) show(true); } }, "Make a new token")),
+      h("div", { class: "small muted" }, "Test from a computer: ", h("code", {}, `curl -X POST ${r.url} -H "Authorization: Bearer ${r.token}" -H "Content-Type: application/json" -d '{"text":"Test from curl"}'`)));
+  }
+  api("/api/shortcuts").then(r => {
+    if (r.symbols && r.symbols.length) symbols = r.symbols.map(x => x.toLowerCase()).join(", ");
+    if (r.enabled && r.token_set) show(false); else setup.replaceChildren(h("div", {}, "Not switched on yet. Press the button to turn on the print API and get your token."));
+    drawRecipes();
+  });
+  const recipes = h("div", {});
+  const prompt1 = () => `Turn the phrase below into a short reminder for a receipt printer. Reply with ONLY a JSON object, no other words:
+{"heading": "<2 to 5 word title>", "text": "<the reminder in one clear sentence; keep any day or time exactly as said>", "symbols": "<0 to 2 names from: ${symbols}>"}
+Use an empty string for symbols unless one clearly fits.
+
+Phrase: `;
+  const prompt2 = () => `Below is text read from a screenshot or photo. Work out what I should be reminded of, or the message it contains. Reply with ONLY a JSON object, no other words:
+{"heading": "<2 to 5 word title>", "text": "<the reminder or message in 1 to 3 short sentences; keep names, dates, times, amounts and places exactly as written>", "symbols": "<0 to 2 names from: ${symbols}>"}
+Use an empty string for symbols unless one clearly fits.
+
+Text from the screenshot: `;
+  function drawRecipes() {
+    recipes.replaceChildren(
+      h("div", { class: "card" }, h("h3", {}, "Shortcut 1: a phrase becomes a reminder (Apple Intelligence tidies it)"),
+        h("p", { class: "small muted" }, "You can talk to it too: “Hey Siri, remind the printer”, or put it on the Action Button or a Home Screen icon."),
+        h("ol", { class: "small" },
+          h("li", {}, "Shortcuts app → + → name it “Remind the printer”."),
+          h("li", {}, h("strong", {}, "Ask for Input"), " (or ", h("strong", {}, "Dictate Text"), "): prompt “What should I remind you of?”, type Text."),
+          h("li", {}, h("strong", {}, "Use Model"), " → Model: ", h("strong", {}, "On-Device"), " (private, instant) or ", h("strong", {}, "Private Cloud Compute"), " (smarter). Paste this prompt, then tap at the end of it and insert the ", h("strong", {}, "Provided Input"), " variable (the Ask for Input result). If the action offers an output type, pick ", h("strong", {}, "Dictionary"), "; if not, leave it as Text and add the next step:")),
+        box(prompt1(), 7),
+        h("ol", { class: "small", start: 4 },
+          h("li", {}, "(Only if the model's answer is Text) ", h("strong", {}, "Get Dictionary from Input"), " on the Use Model result."),
+          h("li", {}, h("strong", {}, "Get Contents of URL"), ": URL = the web address above; ", h("strong", {}, "Show More"), " → Method ", h("strong", {}, "POST"), "; Headers: ", h("code", {}, "Authorization"), " = ", h("code", {}, "Bearer YOUR-TOKEN"), " (copy it from above); Request Body ", h("strong", {}, "JSON"), " with fields: ",
+            h("code", {}, "text"), " (Text) = the dictionary's ", h("em", {}, "text"), " value, ", h("code", {}, "heading"), " = its ", h("em", {}, "heading"), " value, ", h("code", {}, "symbols"), " = its ", h("em", {}, "symbols"), " value, ", h("code", {}, "kind"), " = ", h("code", {}, "reminder"), " (or ", h("code", {}, "message"), ")."),
+          h("li", {}, h("strong", {}, "Show Notification"), " “Sent to the printer”. Run it: a reminder prints within seconds.")),
+        h("p", { class: "small muted" }, "No Apple Intelligence step is needed to try it: skip steps 3 and 4 and send just ", h("code", {}, "text"), " = the Ask for Input result. The box already fixes spelling, splits several tasks into separate reminders and turns “tomorrow 5pm” into a DUE line. The AI step is for turning rambling dictation into a clean headline, text and symbol.")),
+      h("div", { class: "card" }, h("h3", {}, "Shortcut 2: share a screenshot or photo and it prints the reminder"),
+        h("p", { class: "small muted" }, "Yes, this works: Shortcuts can appear in the Share Sheet. Screenshot something, tap the preview, Share → “Print this screenshot” (or Photos → Share). Apple Intelligence reads the text in the picture and decides what the reminder is."),
+        h("ol", { class: "small" },
+          h("li", {}, "Shortcuts app → + → name it “Print this screenshot”. Tap ⓘ (details) → switch on ", h("strong", {}, "Show in Share Sheet"), " → Share Sheet Types: keep ", h("strong", {}, "Images"), " only."),
+          h("li", {}, h("strong", {}, "Extract Text from Image"), " (on-device text recognition) on ", h("strong", {}, "Shortcut Input"), "."),
+          h("li", {}, "(Optional) ", h("strong", {}, "Choose from Menu"), ": “Reminder / Message”, and use the choice as ", h("code", {}, "kind"), " below (message = a MESSAGE slip with the time it was sent)."),
+          h("li", {}, h("strong", {}, "Use Model"), " (On-Device or Private Cloud Compute). Paste this prompt and insert the ", h("strong", {}, "Text from Image"), " variable at the end; output ", h("strong", {}, "Dictionary"), " if offered:")),
+        box(prompt2(), 7),
+        h("ol", { class: "small", start: 5 },
+          h("li", {}, h("strong", {}, "Get Contents of URL"), ": same address and header as shortcut 1, Method ", h("strong", {}, "POST"), ", Request Body ", h("strong", {}, "Form"), " with fields ", h("code", {}, "text"), ", ", h("code", {}, "heading"), ", ", h("code", {}, "symbols"), ", ", h("code", {}, "kind"),
+            " (Text, from the model's dictionary) and a ", h("strong", {}, "File"), " field named ", h("code", {}, "images"), " = ", h("strong", {}, "Shortcut Input"), " (prints the screenshot under the reminder; leave this field out for text only)."),
+          h("li", {}, h("strong", {}, "Show Notification"), " “Sent to the printer”.")),
+        h("p", { class: "small muted" }, "Apple's own models read text, not pictures, so the steps above go via the text in the image: private and on the phone. If you want the AI to actually look at the picture (a photo, a handwritten note), choose ", h("strong", {}, "ChatGPT"), " as the model in Use Model and attach Shortcut Input; that sends the image to OpenAI, so only use it for things you're happy to share.")),
+      h("div", { class: "card" }, h("h3", {}, "What the phone can send"),
+        h("table", { class: "small" },
+          ...[["text", "the reminder or message (tidied up, split into tasks, dates become DUE)"], ["heading", "optional bold heading"], ["kind", "reminder (default) · message · plain (print exactly as written)"],
+              ["from", "optional “from” name: MESSAGE says “from Jack”, a reminder gets a “From Jack” line"], ["symbols", `optional, up to a few of: ${symbols}`],
+              ["images", "a picture file (form) or image_base64 (JSON), printed under the text; screenshots, photos and HEIC all work"], ["urgent / copies / template", "as on the Print page"]]
+            .map(([k, v]) => h("tr", {}, h("td", { style: "padding:2px 10px 2px 0" }, h("code", {}, k)), h("td", {}, v)))),
+        h("p", { class: "small muted" }, "The answer is JSON like ", h("code", {}, '{"ok": true, "message": "Sent 1 printout to the printer"}'), "; Shortcuts can show the ", h("em", {}, "message"), " value. Errors say what's wrong (e.g. wrong token).")),
+      h("div", { class: "card" }, h("h3", {}, "If it doesn't work"),
+        h("ul", { class: "small" },
+          h("li", {}, "The phone must be on the same Wi-Fi as the Pi (or on a VPN such as Tailscale when you're out). The first time, allow Shortcuts to find devices on the local network."),
+          h("li", {}, "If ", h("code", {}, "jack-in-a-box.local"), " isn't found, use the Pi's number address instead (shown on the Dashboard)."),
+          h("li", {}, "“unauthorised” = the header is wrong: it must read exactly ", h("code", {}, "Bearer "), " followed by the token."),
+          h("li", {}, "I wrote these steps from how Shortcuts works but couldn't run them on a real iPhone, and Apple renames actions between iOS versions. If a step doesn't match what you see, tell me and I'll adjust."))));
+  }
+  main.append(h("div", { class: "card" }, h("h2", {}, "iPhone Shortcuts"),
+    h("p", { class: "small" }, "Send reminders and messages to the printer from your iPhone: type or say a phrase, or share a screenshot or photo. Apple Intelligence (on your iPhone 15 Pro) can tidy the wording first. The shortcut posts to this box over your home Wi-Fi."),
+    setup, h("div", { class: "row", style: "margin-top:8px" }, h("button", { class: "btn primary", onclick: () => show(false) }, "Switch on and show my token"))), recipes);
 }

@@ -149,7 +149,7 @@ Useful commands: `systemctl status jack-in-a-box` · `journalctl -u jack-in-a-bo
 * **Rules** - "if sender contains `@bigclient.com` → use the Client template, title CLIENT, 2 copies"; tag a boss's
   emails `[BOSS]` and mark them urgent; silence noise. Work for calendar events too.
 * **Integrations** - an HTTP endpoint so Zapier / Make / Home Assistant / iOS Shortcuts / your own scripts
-  can print (`POST /api/print`), a webhook after each print, and a `plugins/` folder for your own Python.
+  can print (`POST /api/print`; see *iPhone Shortcuts* below), a webhook after each print, and a `plugins/` folder for your own Python.
 * **Try it** - type an email and see precisely how it'll be split, corrected and laid out, without printing.
 * **Dashboard** - history with thumbnails, *Reprint*, a live activity log, printer status. If the printer is off or out
   of paper, jobs wait and retry in order.
@@ -421,6 +421,34 @@ and a lock makes sure it never mixes with another printout.
 * **Limits and risks:** raw printer data can do anything the printer's command language can (including changing its settings), so this is **off by default** and, like AirPrint, only
   accepts computers on your own network. Epson's status monitor can't see paper-out or cover-open through this box (it only forwards the data), and a driver that insists on two-way
   status may complain. I couldn't test with a real Mac and Epson's driver, only with simulated drivers sending ESC/POS data, so tell me what you see.
+
+## iPhone Shortcuts: send a phrase, or a shared screenshot, to the printer
+
+The **iPhone Shortcuts** tab switches on the print API, shows your web address and secret token (with Copy buttons), and has step-by-step recipes, with the Apple Intelligence
+prompts ready to paste, for two shortcuts:
+
+1. **"Remind the printer"**: you type or dictate a phrase (also "Hey Siri, remind the printer", or the Action Button). A *Use Model* step (Apple Intelligence, on-device or Private Cloud
+   Compute) turns it into `{heading, text, symbols}`, and a *Get Contents of URL* step posts it to the box. The box already tidies spelling, splits several tasks and turns "tomorrow 5pm" into a DUE
+   line, so the AI step is optional (without it, just send the phrase as `text`).
+2. **"Print this screenshot"**: it appears in the **Share Sheet** for images (screenshot preview -> Share, or Photos -> Share). *Extract Text from Image* reads the screenshot on the phone, *Use Model*
+   decides what the reminder or message is, and the shortcut posts it (and, if you like, the screenshot itself, which prints under the reminder). Apple's own models read text rather than pictures, so this
+   goes via the text in the image. If you want the AI to look at the picture itself (a photo, handwriting), choose *ChatGPT* as the model in *Use Model*; that sends the image to OpenAI.
+
+The API is `POST /api/print` with the header `Authorization: Bearer <token>`; send JSON or a form (a form can include picture files):
+
+| Field | Meaning |
+|---|---|
+| `text` | the reminder or message (spelling fixed, several tasks split, dates -> DUE) |
+| `heading` | optional bold heading |
+| `kind` | `reminder` (default), `message` (a MESSAGE slip showing when it was sent) or `plain` (printed exactly as written) |
+| `from` | optional "from" name: a message says "from Jack"; a reminder gets a "From Jack" line |
+| `symbols` | optional, names or numbers: `school, money` (unknown ones are reported back, not fatal) |
+| `images` | picture file(s) in a form (also `image`/`file`), or `image_base64` / `images_base64` in JSON: up to 4, printed under the text; screenshots, photos and HEIC |
+| `urgent`, `copies`, `template` | as on the Print page (copies at most 5) |
+
+The answer is JSON such as `{"ok": true, "message": "Sent 1 printout to the printer"}`; mistakes get a clear `error` (wrong token = 401, nothing to print = 400, queue full = 429, over 20 MB = 413).
+The phone must be on your home Wi-Fi (or a VPN such as Tailscale when you're out); the first run asks to let Shortcuts find devices on the local network. I couldn't run Shortcuts here, so
+the recipes follow how it works but action names can differ between iOS versions; tell me if a step doesn't match what you see.
 
 ## Power, cooling and the email mailbox
 

@@ -22,10 +22,11 @@ from . import aifeedback, icons as icon_lib, llm, plugins, schema, sheet as shee
 from .config import APP_DIR, DATA_DIR, ROOT, KIND_DEFAULTS, ConfigStore, default_template, merge
 from .mailbox import MailPoller
 from .mailparse import Incoming, _load_image, parse
-from .pipeline import build_cards, classify_sender, local_now, local_tz, plain_card
+from .pipeline import build_cards, classify_sender, local_now, local_tz, message_card, plain_card
 from .render import FONTS, UPLOAD_DIR, render_card
 from .samples import sample_card, sample_image
 from .service import LOGBUF, Service
+from .textproc import _dedupe
 
 log = logging.getLogger("web")
 PUBLIC_API = {"/api/state", "/api/login", "/api/setup", "/api/print"}
@@ -628,25 +629,113 @@ def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button, 
         p = UPLOAD_DIR / name
         return send_file(p, mimetype="image/png") if p.exists() else ("", 404)
 
-    # ------------------------------------------------------------ external print API
+    # ------------------------------------------------------------ external print API (iOS Shortcuts, Zapier, Home Assistant ...)
+    API_MAX_BYTES = 20 * 1024 * 1024
+
+    def truthy(v) -> bool:
+        return str(v).strip().lower() in ("1", "true", "yes", "on", "y")
+
+    def api_authorised() -> bool:
+        ic = cfg.data["integrations"]
+        tok = (request.headers.get("Authorization", "").removeprefix("Bearer ").strip() or request.headers.get("X-Token", "").strip())
+        return bool(ic.get("api_enabled") and ic.get("api_token") and hmac.compare_digest(tok, ic["api_token"]))
+
     @app.post("/api/print")
     def api_print():
-        ic = cfg.data["integrations"]
-        tok = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
-        if not ic.get("api_enabled") or not ic.get("api_token") or not hmac.compare_digest(tok, ic["api_token"]):
-            return jsonify(error="unauthorised"), 401
-        b = request.get_json(silent=True) or {}
+        """Print from another app.  JSON or a form (what Shortcuts sends, with pictures):
+
+        text       the reminder / message (the usual tidy-up applies: spelling, split into tasks, dates -> DUE)
+        heading    optional bold heading            kind     reminder (default) | message | plain (exactly as written)
+        from       optional "from" name             symbols  optional, names or numbers: "school, money"
+        images     picture file(s) (form) or image_base64 / images_base64 (JSON); printed under the text
+        urgent, copies, template   as on the Print page
+        """
+        if not api_authorised():
+            return jsonify(error="unauthorised: wrong token, or the HTTP print API is switched off (Integrations / iPhone Shortcuts tab)"), 401
+        if (request.content_length or 0) > API_MAX_BYTES:
+            return jsonify(error="too big (20 MB at most)"), 413
+        b = request.get_json(silent=True)
+        if not isinstance(b, dict):
+            b = request.form.to_dict()
         text = str(b.get("text", ""))[:5000]
-        inc = Incoming(subject=str(b.get("heading", ""))[:200], body=text, sender_addr="api", date=None)
-        cards, copies = build_cards(inc, cfg.data)
+        heading = str(b.get("heading", ""))[:200]
+        kind = str(b.get("kind", "reminder")).strip().lower()
+        if kind not in ("reminder", "message", "plain", "exact"):
+            return jsonify(error="kind must be reminder, message or plain"), 400
+        from_name = re.sub(r"\s+", " ", str(b.get("from") or b.get("name") or "")).strip()[:60]
+
+        images: list = []
+        blobs = [f.read() for f in (request.files.getlist("images") + request.files.getlist("image") + request.files.getlist("file"))[:4]]
+        raw64 = b.get("images_base64") or ([b["image_base64"]] if b.get("image_base64") else [])
+        for item in (raw64 if isinstance(raw64, list) else [raw64])[:4]:
+            try:
+                blobs.append(base64.b64decode(re.sub(r"^data:[^,]*,", "", str(item)), validate=False))
+            except Exception:
+                return jsonify(error="image_base64 isn't valid base64"), 400
+        for blob in blobs[:4]:
+            im = _load_image(blob, 0)
+            if im is None:
+                return jsonify(error="One of the images isn't a picture I can read (use JPG, PNG, GIF, BMP or HEIC)"), 400
+            images.append(im)
+
+        sym_ids, bad_syms = [], []
+        for part in re.split(r"[,;]", str(b.get("symbols") or "")):
+            if part.strip():
+                iid = icon_lib.symbol_from_value(part.strip(), cfg.data)
+                (sym_ids if iid else bad_syms).append(iid or part.strip())
+        if svc.status()["queued"] >= 50:
+            return jsonify(error="the printer queue is full - try again in a minute"), 429
+
+        now = local_now(cfg.data)
+        inc = Incoming(subject=heading, body=text, sender_addr="api", sender_name=from_name, images=images)
+        tpl = b.get("template") if b.get("template") in cfg.data["templates"] else ""
+        if kind == "message":
+            card = message_card(inc, {"name": from_name or "iPhone", "email": ""}, cfg.data, now, when=now)
+            cards, copies = ([card] if card else []), 1
+        elif kind in ("plain", "exact"):
+            card = plain_card(inc, cfg.data, now, template=tpl, kind=cfg.data["templates"][tpl]["kind"] if tpl else "reminder")
+            cards, copies = ([card] if card else []), 1
+        else:
+            cards, copies = build_cards(inc, cfg.data, now)
+        if not cards:
+            return jsonify(error="nothing to print: send some text, a heading or a picture"), 400
+        try:
+            copies = max(copies, min(5, max(1, int(b.get("copies") or 1))))
+        except (TypeError, ValueError):
+            pass
+        ids = []
         for c in cards:
             c.source = "api"
-            if b.get("template") in cfg.data["templates"]:
-                c.template = b["template"]
-            if b.get("urgent"):
+            c.icons = _dedupe(sym_ids + c.icons)[:6]
+            if from_name and kind != "message":
+                c.stamp = f"From {from_name}"
+            if tpl and kind != "message":
+                c.template = tpl
+            if truthy(b.get("urgent")):
                 c.priority = True
-        ids = [i for c in cards for i in svc.submit(c, copies)]
-        return jsonify(queued=len(ids), ids=ids)
+            ids += svc.submit(c, copies)
+        out = {"ok": True, "queued": len(ids), "ids": ids, "cards": len(cards),
+               "message": f"Sent {len(cards)} {'message' if kind == 'message' else 'printout'}{'s' if len(cards) != 1 else ''} to the printer"}
+        if bad_syms:
+            out["ignored_symbols"] = bad_syms
+        return jsonify(out)
+
+    @app.get("/api/shortcuts")
+    def shortcuts_info():
+        """For the iPhone Shortcuts page: is the API on, is there a token, what address should the phone use."""
+        ic = cfg.data["integrations"]
+        return jsonify(enabled=bool(ic.get("api_enabled")), token_set=bool(ic.get("api_token")), url=request.host_url.rstrip("/") + "/api/print",
+                       symbols=[x["name"] for x in icon_lib.numbered(cfg.data) if x["enabled"]])
+
+    @app.post("/api/shortcuts-token")
+    def shortcuts_token():
+        """Switch the print API on and give the phone a token (keep the current one unless regenerate)."""
+        d = cfg.data
+        if (request.json or {}).get("regenerate") or not d["integrations"].get("api_token"):
+            d["integrations"]["api_token"] = secrets.token_urlsafe(24)
+        d["integrations"]["api_enabled"] = True
+        cfg.replace(d)
+        return jsonify(token=d["integrations"]["api_token"], url=request.host_url.rstrip("/") + "/api/print")
 
     plugins.register_routes(app)
     return app
