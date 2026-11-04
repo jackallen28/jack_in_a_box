@@ -26,7 +26,7 @@ TEMPLATE_GROUPS = [
     {"title": "Size & spacing", "fields": [
         F("t.label", "Template name", help="Shown in menus."),
         F("t.width_mm", "Printout width (mm)", "number", "The TM-T82II can print at most 72 mm of its 80 mm paper.", min=30, max=72, step=1),
-        F("t.min_height_mm", "Minimum height (mm)", "number", "80 gives the 80x80 mm square; it grows taller with content.", min=20, max=400, step=1),
+        F("t.min_height_mm", "Minimum height (mm)", "number", "A slip is as short as its content, but never shorter than this (default 30 mm). Set 80 for the old 80x80 mm square.", min=10, max=400, step=1),
         F("t.max_height_mm", "Maximum height (mm)", "number", min=80, max=2000, step=10),
         F("t.margin_top_mm", "White space above the printout (mm)", "number",
           "Blank paper before the border starts, e.g. 10. The printer's own paper-feed before the cut is set separately on the Printer tab.", min=0, max=60, step=1),
@@ -243,6 +243,8 @@ SECTIONS = {
         F("watchlist.enabled", "Recognise movies and TV shows to watch", "bool", "A message with a movie or TV show to watch prints as a WATCH LIST slip (one per title) with the ACTION symbol at the top. Use “watch list” (or movie, film, TV, series) in the subject, or write things like “watch Dune (2021)” or “Severance season 2” in the message. Pink Panther episodes keep their own slip."),
         F("watchlist.symbol", "Symbol at the top", "text", "A symbol name or tag from the Symbols page. Default: action (the clapperboard; if you draw your own symbol called “action” it is used instead)."),
         F("watchlist.ai", "Let the AI find the titles in a long email", "bool", "Needs AI mode switched on (Text & sorting). Every title it picks must appear in your text, so it can't invent one."),
+        F("watchlist.plot", "Print a short plot line from the email's description", "bool", "Emails written as “Movie Name: … Description: … Release Date: …” give the title, the release date or year and 2-3 sentences of plot. Director, cast, themes and other extras are never printed."),
+        F("watchlist.plot_ai", "Let the AI condense a long description", "bool", "Needs AI mode switched on. 2-4 spoiler-free sentences, checked so it can't make things up; otherwise the opening sentences are used."),
         F("watchlist.max_titles", "Most slips from one message", "number", "Normally an email names one movie or show. If it names several, each gets its own slip, up to this many.", min=1, max=20),
     ],
     "pinkpanther": [

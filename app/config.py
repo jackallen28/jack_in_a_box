@@ -67,7 +67,7 @@ def default_template(kind: str = "reminder") -> dict:
         "label": k["label"],
         # Paper is 80 mm; the TM-T82II can only print 72 mm (576 dots) of it.
         "width_mm": 72,
-        "min_height_mm": 80,
+        "min_height_mm": 30,       # slips are as short as their content, but never shorter than this (it used to be 80)
         "max_height_mm": 700,
         "margin_top_mm": 0,        # blank paper ABOVE the printout (outside the border)
         "margin_bottom_mm": 0,     # blank paper BELOW it
@@ -263,6 +263,8 @@ DEFAULTS: dict = {
         "enabled": True,
         "symbol": "action",         # the symbol at the top: a name or tag from the Symbols page (your own "action" symbol wins over the built-in clapperboard)
         "ai": True,                 # with AI mode on, the local AI also picks the titles out of a long, chatty email (each title must appear in the text)
+        "plot": True,               # a short PLOT line from the email's own "Description:" (2-3 sentences; director, cast, themes are never printed)
+        "plot_ai": True,            # with AI mode on, the local AI condenses a long description into 2-4 spoiler-free sentences (else the opening sentences)
         "max_titles": 5,            # at most this many titles (a slip each) from one message
     },
     # Share the receipt printer on your network as an AirPrint / IPP Everywhere printer (see app/airprint.py)
@@ -357,6 +359,12 @@ def normalise(cfg: dict) -> dict:
     for k in BUILTIN_TEMPLATES:
         tpls.setdefault(k, default_template(k))
     cfg["templates"] = tpls
+    mig = cfg.setdefault("migrations", {})
+    if not mig.get("min_height_30"):               # once: the old 80 mm minimum (the old default) becomes 30 mm; a value you set yourself afterwards is kept
+        for t in tpls.values():
+            if isinstance(t, dict) and t.get("min_height_mm") == 80:
+                t["min_height_mm"] = 30
+        mig["min_height_30"] = True
     if not cfg["web"].get("secret_key"):
         cfg["web"]["secret_key"] = secrets.token_hex(32)
     return cfg

@@ -71,7 +71,7 @@ def test_message_title_and_name_are_on_the_printout(env):
     tpl = cfg.data["templates"]["message"]
     assert tpl["title"]["text"] == "MESSAGE" and "{name}" in tpl["title"]["subtitle"]
     img = render_card(card, tpl, cfg.data["printer"])
-    assert img.size[0] == 576 and img.size[1] >= 640
+    assert img.size[0] == 576 and img.size[1] >= 240      # at least 30 mm (240 dots)
     # the name really is drawn: same card with a different name must produce a different bitmap
     card2 = message_card(parse(mk("Hi", "yo", sender="Sarah <sarah@x.com>")), {**cfg.data["friends"][0], "name": "Bob"}, cfg.data)
     assert render_card(card2, tpl, cfg.data["printer"]).tobytes() != img.tobytes()

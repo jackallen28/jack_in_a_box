@@ -23,10 +23,11 @@ import re
 from dataclasses import replace
 from datetime import datetime
 
+from . import fields
 from . import icons as icon_lib
 from . import llm
 from .models import Card, Section
-from .pinkpanther import MENTION, drop_signoff, long_message, tidy_body
+from .pinkpanther import MENTION, drop_signoff, long_message, plot_from_text, sentences, tidy_body
 
 log = logging.getLogger(__name__)
 
@@ -113,7 +114,7 @@ def _item(title: str, line: str, others: list[str] | None = None) -> dict | None
     on = next((name for name, rx in _SERVICE_RE if rx.search(line) and not rx.fullmatch(title)), "")
     kind = "tv" if _TV_WORDS.search(line) and not _MOVIE_WORDS.search(line) else "movie" if _MOVIE_WORDS.search(line) and not _TV_WORDS.search(line) else ""
     sm = _SEASON.search(line)
-    return {"title": title, "type": kind, "year": year, "on": on, "season": (sm.group(1) or sm.group(2)) if sm else ""}
+    return {"title": title, "type": kind, "year": year, "on": on, "season": (sm.group(1) or sm.group(2)) if sm else "", "date": "", "plot": ""}
 
 
 def _clean_line(line: str) -> str:
@@ -242,7 +243,7 @@ def ai_titles(text: str, cfg: dict) -> list[dict]:
             continue
         kind = (parts[1].lower() if len(parts) > 1 else "")
         year = parts[2] if len(parts) > 2 and re.fullmatch(r"(?:19|20)\d{2}", parts[2]) and parts[2] in text else ""
-        out.append({"title": title, "type": "tv" if kind.startswith("tv") else "movie" if kind.startswith("mov") or kind.startswith("film") else "", "year": year, "on": "", "season": ""})
+        out.append({"title": title, "type": "tv" if kind.startswith("tv") else "movie" if kind.startswith("mov") or kind.startswith("film") else "", "year": year, "on": "", "season": "", "date": "", "plot": ""})
     return out
 
 
@@ -297,23 +298,59 @@ def describe(it: dict) -> str:
 
 
 def make_card(it: dict, icons: list[str], cfg: dict, now: datetime) -> Card:
-    """One slip per title: the title as the heading, with TYPE / SEASON / YEAR / ON underneath (only what the message said)."""
+    """One slip per title: the title as the heading, then TYPE / SEASON / DATE (or YEAR) / ON and a short PLOT: only what the message said."""
     sym = symbol_id(cfg)
     ids = list(dict.fromkeys(([sym] if sym else []) + icons))
-    facts = [f"TYPE: {'TV SHOW' if it['type'] == 'tv' else 'MOVIE'}" if it["type"] else "", f"SEASON: {it['season']}" if it.get("season") else "",
-             f"YEAR: {it['year']}" if it["year"] else "", f"ON: {it['on']}" if it["on"] else ""]
+    when = f"DATE: {it['date']}" if it.get("date") else f"YEAR: {it['year']}" if it["year"] else ""
+    facts = [f"TYPE: {'TV SHOW' if it['type'] == 'tv' else 'MOVIE'}" if it["type"] else "", f"SEASON: {it['season']}" if it.get("season") else "", when,
+             f"ON: {it['on']}" if it["on"] else ""]
     sections = [Section("text", text="\n".join(f for f in facts if f))] if any(facts) else []
+    if it.get("plot"):
+        sections.append(Section("text", label="PLOT", text=it["plot"]))
     return Card(kind="watchlist", template="watchlist", heading=it["title"], sections=sections, icons=ids, source="email", created=now, stamp="",
                 vars={"date": now.strftime("%a %d %b"), "item": it})
+
+
+def infer_type(desc: str) -> str:
+    """The first sentence of a description often says it: "... is a 2019 TV series ...", "a dark comedy film ..." (blank if it doesn't)."""
+    first = (sentences(desc) or [""])[0]
+    if re.search(r"\b(?:tv|television)\b|\b(?:mini-?series|sitcom|series|anime|docuseries)\b", first, re.I):
+        return "tv"
+    if re.search(r"\b(?:film|movie)\b", first, re.I):
+        return "movie"
+    return ""
+
+
+def build_records(cfg: dict, now: datetime, recs: list, icons: list[str]):
+    """The labelled-lines version: "Movie Name: ... Description: ... Release Date: ...".  Director, cast, themes and the rest are dropped."""
+    wl = cfg["watchlist"]
+    budget = {"ai": 3}
+    cards = []
+    seen: set[str] = set()
+    for r in recs[: max(1, int(wl.get("max_titles", 5)))]:
+        if norm(r.title) in seen:
+            continue
+        seen.add(norm(r.title))
+        it = {"title": r.title, "type": r.type or infer_type(r.desc), "year": r.year, "on": r.on, "season": r.season, "date": r.date,
+              "plot": plot_from_text(r.title, r.desc, cfg, bool(wl.get("plot_ai", True) and wl.get("ai", True)), budget, "movie or TV show", 2, 330) if wl.get("plot", True) else ""}
+        cards.append(make_card(it, icons, cfg, now))
+    return cards
 
 
 def build(inc, cfg: dict, now: datetime):
     """([one WATCH LIST slip per title] or [], the rest of the message to print normally or None).  Same contract as pinkpanther.build."""
     wl = cfg.get("watchlist", {})
-    if not wl.get("enabled", True) or MENTION.search(f"{inc.subject}\n{inc.body}"):
+    if not wl.get("enabled", True):
+        return [], inc
+    subj, sym = icon_lib.extract_tags(inc.subject or "", cfg)
+    body0, bsym = icon_lib.extract_tags(inc.body or "", cfg)
+    recs = fields.parse(body0, allow_weak=bool(strength(replace(inc, subject=subj, body=body0), cfg)))
+    if recs:                                                                 # "Movie Name: ... Description: ..." emails
+        return build_records(cfg, now, recs, list(dict.fromkeys(sym + bsym))), None
+    if MENTION.search(f"{inc.subject}\n{inc.body}"):
         return [], inc                                                       # Pink Panther messages have their own slip
     res = find_titles(inc, cfg)
-    items = res["items"][: max(1, int(wl.get("max_titles", 12)))]
+    items = res["items"][: max(1, int(wl.get("max_titles", 5)))]
     if not items:
         return [], inc
     cards = [make_card(it, res["icons"], cfg, now) for it in items]

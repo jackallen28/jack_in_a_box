@@ -31,6 +31,7 @@ from functools import lru_cache
 from html.parser import HTMLParser
 from pathlib import Path
 
+from . import fields
 from . import icons as icon_lib
 from .config import APP_DIR, DATA_DIR
 from .models import Card, Section
@@ -502,7 +503,7 @@ def find_episodes(inc, cfg: dict, episodes: list[dict]) -> dict:
 
 # =========================================================================== the plot overview (no spoilers)
 _SENT = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(])")
-PLOT_SYSTEM = ("You write the plot overview of a classic cartoon for someone deciding whether to watch it. Use ONLY facts stated in the text you are given. "
+PLOT_SYSTEM = ("You write the plot overview of a {noun} for someone deciding whether to watch it. Use ONLY facts stated in the text you are given. "
                "Write 2 to 4 short, plain sentences describing the set-up: who is in it and what the situation is. NEVER reveal how it ends, any twist or the "
                "punchline. No bullet points, no title, no remarks about the text.")
 
@@ -527,10 +528,10 @@ def extractive_plot(source: str, max_sentences: int = 3, limit: int = 420) -> st
     return " ".join(out)
 
 
-def ai_plot(title: str, source: str, cfg: dict) -> str | None:
+def ai_plot(title: str, source: str, cfg: dict, noun: str = "classic cartoon") -> str | None:
     """The local model's 2-4 sentence overview, or None if it isn't available or made things up (everything it says must come from the text)."""
     from . import llm
-    text, info = llm.generate(PLOT_SYSTEM, f"Cartoon: {title}\nText:\n{source[:1500]}\n\nPlot overview (2 to 4 sentences, no spoilers):", cfg["llm"], num_predict=170)
+    text, info = llm.generate(PLOT_SYSTEM.format(noun=noun), f"{noun.split()[-1].capitalize()}: {title}\nText:\n{source[:1500]}\n\nPlot overview (2 to 4 sentences, no spoilers):", cfg["llm"], num_predict=170)
     if not text:
         log.info("Plot overview: AI not used (%s)", info.get("reason"))
         return None
@@ -566,6 +567,19 @@ def plot_for(ep: dict, details: dict, cfg: dict, path: Path | None, budget: dict
     return extractive_plot(src)
 
 
+def plot_from_text(title: str, src: str, cfg: dict, ai_allowed: bool, budget: dict, noun: str = "classic cartoon", max_sentences: int = 3, limit: int = 420) -> str:
+    """A 2-4 sentence overview of text the email itself carried (its "Description:").  The AI condenses it when AI mode is on (and allowed),
+    otherwise the opening sentences are used.  Not cached (it is this email's wording)."""
+    if not (src or "").strip():
+        return ""
+    if ai_allowed and cfg["summary"].get("backend") == "ollama" and budget.get("ai", 0) > 0:
+        budget["ai"] -= 1
+        t = ai_plot(title, src, cfg, noun)
+        if t:
+            return t
+    return extractive_plot(src, max_sentences, limit)
+
+
 # =========================================================================== the slips
 def short_season(a: dict) -> str:
     return f"S{a['season']} #{a['episode']}"
@@ -584,6 +598,8 @@ def fact_lines(ep: dict, details: dict) -> list[str]:
             lines.append("ALSO: " + ", ".join(short_season(a) for a in aps[1:4]) + (" ..." if len(aps) > 4 else ""))
     elif details.get("release"):
         lines.append(f"DATE: {details['release']}")
+    elif details.get("year"):
+        lines.append(f"YEAR: {details['year']}")
     return lines
 
 
@@ -591,16 +607,69 @@ def make_card(ep: dict | None, name: str, plot: str, details: dict, cfg: dict, n
     """A matched episode: real title, season, date, episode, plot.  Not in the list: just the name as you wrote it."""
     pp = cfg["pinkpanther"]
     sections: list[Section] = []
-    if ep:
-        facts = fact_lines(ep, details)
-        if facts:
-            sections.append(Section("text", text="\n".join(facts)))
-        if plot:
-            sections.append(Section("text", label="PLOT", text=plot))
+    facts = fact_lines(ep or {}, details)                                  # not in the list: only what the email itself said (a date)
+    if facts:
+        sections.append(Section("text", text="\n".join(facts)))
+    if plot:
+        sections.append(Section("text", label="PLOT", text=plot))
     return Card(kind="pinkpanther", template="pinkpanther", heading=(ep["title"] if ep else name) or "Pink Panther", sections=sections, icons=icons,
                 source="email", created=now, stamp="",
                 vars={"graphic_style": pp.get("style", "shaded"), "graphic": "on" if pp.get("show_image", True) else "off",
                       "date": now.strftime("%a %d %b"), "matched": bool(ep)})
+
+
+_CARTOON = re.compile(r"\b(?:cartoon|short|animated|animation|episode|series|tv|show)\b", re.I)
+
+
+def is_pp_record(rec: "fields.Record", strong: bool, episodes: list[dict]) -> bool:
+    """Is this labelled record a Pink Panther episode (as opposed to some other movie or show)?  Yes if the subject says Pink Panther, the title is
+    one of the shorts (exactly, or loosely with the description saying Pink Panther), the title says Pink Panther, or the description says it is a
+    Pink Panther cartoon/short."""
+    if strong or MENTION.search(rec.title):
+        return True
+    n = norm(rec.title)
+    if any(n == norm(e["title"]) for e in episodes):
+        return True
+    about = bool(MENTION.search(rec.desc))
+    if about and match(rec.title, episodes, rec.desc)[0] is not None:
+        return True
+    return about and bool(_CARTOON.search(rec.desc))
+
+
+def build_records(inc, cfg: dict, now: datetime, path, fetch, recs: list, strong: bool, icons: list[str]):
+    """The labelled-lines version of ``build``.  The title comes from the Movie/Show label; the Description gives the plot (when the internet doesn't)
+    and the Release Date the date.  Everything else in the email (director, cast, themes ...) is dropped."""
+    pp = cfg["pinkpanther"]
+    episodes = load_episodes()
+    mine = [r for r in recs if is_pp_record(r, strong, episodes)]
+    others = [r for r in recs if r not in mine]
+    if not mine:
+        return [], inc
+    cap = int(pp.get("max_episodes", 8))
+    lookup = pp.get("lookup", True) and pp.get("details", True)
+    budget = {"ai": int(pp.get("max_ai_plots", 3))}
+    ai_ok = bool(pp.get("ai_plot", True))
+    cards: list[Card] = []
+    seen: set[str] = set()
+    for r in mine:
+        if len(cards) >= cap:
+            break
+        ep, _s, _c = match(r.title, episodes, f"{r.title}\n{r.desc}\n{r.date} {r.year}")
+        key = norm(ep["title"]) if ep else norm(r.title)
+        if key in seen:
+            continue
+        seen.add(key)
+        details = dict(fetch_details(ep, cfg, path, fetch)) if (ep and lookup) else {}
+        if not details.get("release") and r.date:
+            details["release"] = r.date
+        elif not details.get("release") and not ep and r.year:
+            details["year"] = r.year
+        if not details.get("plot_source") and r.desc:
+            details["plot_source"] = r.desc
+        plot = plot_for(ep, details, cfg, path, budget) if ep else plot_from_text(r.title, r.desc, cfg, ai_ok, budget)
+        cards.append(make_card(ep, r.title[:80], plot, details, cfg, now, icons))
+    rest = "\n".join("\n".join(o.raw) for o in others).strip()
+    return cards, (replace(inc, subject="", body=rest) if rest else None)
 
 
 def build(inc, cfg: dict, now: datetime, path: Path | None = None, fetch=None):
@@ -609,7 +678,15 @@ def build(inc, cfg: dict, now: datetime, path: Path | None = None, fetch=None):
     The subject ("Pink Panther") says what it's about; the body, however long, is read for the episodes in it.  An episode is only
     stated as fact when the match is confident; a name that isn't in the list is printed as you wrote it."""
     pp = cfg.get("pinkpanther", {})
-    if not pp.get("enabled", True) or not MENTION.search(f"{inc.subject}\n{inc.body}"):
+    if not pp.get("enabled", True):
+        return [], inc
+    subj, sym = icon_lib.extract_tags(inc.subject or "", cfg)
+    body0, bsym = icon_lib.extract_tags(inc.body or "", cfg)
+    strong_subject = bool(MENTION.search(subj))
+    recs = fields.parse(body0, allow_weak=strong_subject)                  # "Movie/Show: ... Description: ..." emails
+    if recs:
+        return build_records(inc, cfg, now, path, fetch, recs, strong_subject, list(dict.fromkeys(sym + bsym)))
+    if not MENTION.search(f"{inc.subject}\n{inc.body}"):
         return [], inc
     res = find_episodes(inc, cfg, load_episodes())
     strong, icons = res["strong"], res["icons"]

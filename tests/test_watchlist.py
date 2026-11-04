@@ -222,7 +222,7 @@ def test_the_web_page_can_test_and_print(tmp_path):
     assert p["printed"] is True and svc.db.one("SELECT kind, title FROM jobs") == {"kind": "watchlist", "title": "Dune"}
     assert c.post("/api/watchlist-test", json={"subject": "Shopping", "q": "milk"}, headers=H).get_json()["cards"] == []
     schema = c.get("/api/schema").get_json()["sections"]["watchlist"]
-    assert {f["path"] for f in schema} == {"watchlist.enabled", "watchlist.symbol", "watchlist.ai", "watchlist.max_titles"}
+    assert {f["path"] for f in schema} == {"watchlist.enabled", "watchlist.symbol", "watchlist.ai", "watchlist.plot", "watchlist.plot_ai", "watchlist.max_titles"}
 
 
 def test_the_full_trip_through_the_mailbox(tmp_path):

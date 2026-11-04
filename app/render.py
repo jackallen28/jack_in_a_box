@@ -462,7 +462,7 @@ def render_card(card: Card, tpl: dict, printer_cfg: dict | None = None, icons_cf
             rendered.append(img)
     content = stack(rendered, inner_w, gap)
 
-    min_h = math.ceil(float(tpl.get("min_height_mm", 80)) * DPI / 25.4)   # round UP so 80 mm is never 79.9
+    min_h = math.ceil(float(tpl.get("min_height_mm", 30)) * DPI / 25.4)   # round UP so 30 mm is never 29.9
     max_h = mm(tpl.get("max_height_mm", 700))
     card_h = min(max(min_h, content.height + 2 * (bw + pad)), max_h)
     face = Image.new("L", (card_w, card_h), 255)

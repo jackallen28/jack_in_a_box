@@ -18,7 +18,7 @@ page at the Pi's IP address.
 │ │ Tomorrow, 5:00 PM     │ │   <- deadline pulled out of the sentence
 │ └──────────────────────┘ │
 │  [ attached photo ]       │   <- pictures go underneath
-└──────────────────────────┘      1 pt black border, at least 80 mm tall, grows with content
+└──────────────────────────┘      1 pt black border, at least 30 mm tall, grows with content
 ```
 
 ## What it does
@@ -503,6 +503,29 @@ prints **one slip per title** (normally an email names just one; if it names sev
   Symbol tags such as `[fun]` are added after it. There is no "From ..." sign-off on these slips or on Pink Panther slips.
 * **Look** (title text, symbol size, order, fonts) is the *Watch list* template on the Templates page. The *Watch list* tab has a *Try it* box showing exactly what the Pi finds, with *Read and print*.
 
+### Emails written as "Label: value" lines (the iPhone Shortcut format)
+
+```
+Movie Name: Sound of Freedom
+Description: Sound of Freedom follows Tim Ballard, a former U.S. government agent ...
+Additional Information:
+Release Date: July 4, 2023
+Director: Alejandro Monteverde
+Lead Actor: Jim Caviezel (as Tim Ballard)
+```
+
+The Pi reads these by their labels, whatever the subject says, and **combs them down to what the slip needs**:
+
+* **Kept:** the title (from `Movie/Show:`, `Movie Name:`, `Movie:`, `Film:`, `Show:`, `TV Show:`, `Series:` ...), the `Description:` / `Relevant Information:` / `Plot:` / `Summary:` (shortened to a
+  couple of spoiler-free sentences), the `Release Date:` (or a year, also from `Title (1992)`), the type (`MOVIE` / `TV SHOW`, from the label, `(TV Series)` or the description) and `Where to watch:`.
+* **Dropped:** Director, Lead Actor, Cast, Based on, Themes, Genre, Rating, "Additional Information:" and any other label.
+* **Several records in one email** (separated by blank lines or just by the next `Movie:` line) each get their own slip, and a description can run over several lines.
+* **Where each goes:** a Pink Panther cartoon (the subject says Pink Panther, the title is one of the shorts, or the description says it is a Pink Panther cartoon/short) gets the PINK PANTHER slip;
+  everything else gets WATCH LIST. A Pink Panther short that is in the built-in guide also gets its SEASON and EPISODE, and the email's own date and description are used when the internet lookup finds
+  nothing; one that isn't in the guide prints its name and the email's description, with nothing invented.
+* A bare `Title:` / `Name:` / `Episode:` label is only trusted when the subject says "watch list" (or similar), so a work email with a "Title:" line is left alone.
+* `Watch list` settings: *Print a short plot line* and *Let the AI condense a long description* (the AI only ever sees the description, and everything it says must come from it).
+
 ## Power, cooling and the email mailbox
 
 **What it costs to run:** a Pi 3B+ idles around 2-3 W, roughly 20-25 kWh a year, which is about **$6-9 a year** at ~30c/kWh. The printer only
@@ -570,7 +593,7 @@ If you set the connection to *Automatic* the app uses USB when a USB printer is 
 
 ## Printer notes (TM-T82II)
 * Paper is 80 mm wide but the printable area is **72 mm (576 dots at 203 dpi)**. Printouts are therefore 72 mm wide and
-  at least 80 mm tall (the "80 x 80" minimum), growing with content. Size is adjustable per template.
+  at least 30 mm tall, growing with content (it used to be 80 mm: your saved templates were moved to 30 once, and a value you set afterwards is kept). Adjustable per template (*Minimum height*).
 * The whole printout is sent as one raster image, so fonts, outlines and pictures print exactly as previewed.
   Non-Latin scripts and emoji aren't supported by the bundled fonts (emoji are dropped).
 * *Printouts per hour* is a safety limit so a mail loop can't empty a roll.
