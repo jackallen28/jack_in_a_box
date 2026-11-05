@@ -239,6 +239,22 @@ SECTIONS = {
         F("power.min_uptime_minutes", "Never power off in the first (minutes after boot)", "number", min=5, max=600),
         F("power.keep_awake_before_calendar_hours", "Stay on if a calendar reminder prints within (hours)", "number", min=0, max=72),
     ],
+    "birthdays": [
+        F("birthdays.enabled", "Birthdays on", "bool", "Prints your birthday list on the day, and recognises birthday reminders."),
+        F("birthdays.print_time", "Print at (HH:MM)", "text", "On the day itself. Default 07:00."),
+        F("birthdays.catch_up", "If the Pi was off then, print as soon as it is back that day", "bool"),
+        F("birthdays.recognise", "Give birthday reminders the BIRTHDAY template", "bool", "A reminder (email, Google Form, Shortcut, web Print) or calendar event that talks about a birthday, like “Sarah's birthday on Friday”, prints with the BIRTHDAY look instead of the plain reminder."),
+        F("birthdays.learn", "Add birthdays that come with a date to my list", "bool", "“Sarah's birthday is 14 March” in a reminder adds Sarah to the list (once), so she comes round every year. Off by default: check the list now and then."),
+        F("birthdays.symbol", "Symbol on the slip", "text", "A name or tag from the Symbols page. Default: birthday (the cake)."),
+    ],
+    "backup": [
+        F("backup.local", "Keep the last few copies of my settings on the Pi", "bool", "Protects against a bad edit. It does NOT protect against a dead SD card: for that, download a copy or turn on the emailed copy."),
+        F("backup.keep", "How many to keep", "number", min=1, max=30),
+        F("backup.email_enabled", "Email me a copy of my settings", "bool", "Sent from the printer's own mailbox to the address below, only when something has changed. The copy includes your passwords unless you untick that, so keep that inbox private."),
+        F("backup.email_to", "Send it to", "text", "Blank = your first admin address (Email tab)."),
+        F("backup.email_every_days", "At most every (days)", "number", min=1, max=60),
+        F("backup.email_secrets", "Include passwords in the emailed copy", "bool", "Needed to restore the printer's own mailbox login without typing the app password again."),
+    ],
     "watchlist": [
         F("watchlist.enabled", "Recognise movies and TV shows to watch", "bool", "A message with a movie or TV show to watch prints as a WATCH LIST slip (one per title) with the ACTION symbol at the top. Use “watch list” (or movie, film, TV, series) in the subject, or write things like “watch Dune (2021)” or “Severance season 2” in the message. Pink Panther episodes keep their own slip."),
         F("watchlist.symbol", "Symbol at the top", "text", "A symbol name or tag from the Symbols page. Default: action (the clapperboard; if you draw your own symbol called “action” it is used instead)."),

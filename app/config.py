@@ -18,7 +18,7 @@ APP_DIR = Path(__file__).resolve().parent
 ROOT = APP_DIR.parent
 DATA_DIR = Path(os.environ.get("JACK_IN_A_BOX_DATA", ROOT / "data"))
 
-BUILTIN_TEMPLATES = ("reminder", "calendar", "email", "message", "pinkpanther", "watchlist")
+BUILTIN_TEMPLATES = ("reminder", "calendar", "email", "message", "pinkpanther", "watchlist", "birthday")
 
 KIND_DEFAULTS = {
     "reminder": {
@@ -44,6 +44,12 @@ KIND_DEFAULTS = {
         "title": "PINK PANTHER",
         "subtitle": "",
         "order": ["title", "graphic", "heading", "body", "footer"],
+    },
+    "birthday": {
+        "label": "Birthday",
+        "title": "BIRTHDAY",
+        "subtitle": "{date}",
+        "order": ["title", "icons", "heading", "body", "footer"],
     },
     "watchlist": {
         "label": "Watch list (movies and TV shows)",
@@ -86,7 +92,7 @@ def default_template(kind: str = "reminder") -> dict:
         },
         "icons": {
             "enabled": True,
-            "size_mm": 20,
+            "size_mm": 32 if kind == "birthday" else 20,
             "max": 6,
             "gap_mm": 3,
             "align": "center",
@@ -102,14 +108,14 @@ def default_template(kind: str = "reminder") -> dict:
             "enabled": True,
             "font": "courier-prime",
             "bold": True,
-            "size_pt": 15,
-            "align": "left",
+            "size_pt": 22 if kind == "birthday" else 15,
+            "align": "center" if kind == "birthday" else "left",
             "show_subline": True,
         },
         "body": {
             "font": "courier-prime",
             "size_pt": 10 if kind == "pinkpanther" else 11,
-            "align": "left",
+            "align": "center" if kind == "birthday" else "left",
             "box": "single",
             "box_width_pt": 1.0,
             "radius_mm": 2,
@@ -257,6 +263,27 @@ DEFAULTS: dict = {
         "show_image": True,         # the hand-drawn Pink Panther picture at the top
         "style": "shaded",          # shaded (outline + light stipple fill) | outline (clean line art)
         "max_episodes": 8,          # at most this many episodes from one message
+    },
+    # Birthdays (app/birthdays.py): your list prints at print_time on the day; reminders that talk about a birthday get the BIRTHDAY template
+    "birthdays": {
+        "enabled": True,
+        "print_time": "07:00",      # HH:MM on the day
+        "catch_up": True,           # the Pi was off at that time: print as soon as it is back the same day
+        "recognise": True,          # a reminder / calendar event about a birthday is printed with the BIRTHDAY template
+        "learn": False,             # a birthday that comes with a date ("Sarah's birthday is 14 March") is also added to the list
+        "symbol": "birthday",       # the cake; a name or tag from the Symbols page
+        "people": [],               # [{id, name, day, month, year (0 = unknown), note, enabled}] - edited on the Birthdays tab
+    },
+    # Backing up your settings (app/backup.py)
+    "backup": {
+        "local": True,              # keep the last few copies of your settings on the Pi (guards against a bad edit, not a dead SD card)
+        "keep": 7,
+        "email_enabled": False,     # email a copy to yourself (the SD card can die; your inbox won't)
+        "email_to": "",             # blank = your first admin address
+        "email_every_days": 7,      # only when something changed since the last one
+        "email_secrets": True,      # include your passwords in the emailed copy (needed to restore the email connection)
+        "last_email": "",
+        "last_email_hash": "",
     },
     # Messages about a movie or TV show to watch: a WATCH LIST slip with the ACTION symbol (app/watchlist.py)
     "watchlist": {

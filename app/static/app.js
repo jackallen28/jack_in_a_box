@@ -68,9 +68,9 @@ $("#logout").addEventListener("click", async () => { await api("/api/logout", { 
 
 /* ---------------------------------------------------------------- tabs */
 const TABS = [
-  ["dashboard", "Dashboard"], ["print", "Print"], ["form", "Google Form"], ["airprint", "AirPrint"], ["shortcuts", "iPhone Shortcuts"], ["pinkpanther", "Pink Panther"], ["watchlist", "Watch list"], ["messages", "Messages"], ["symbols", "Symbols"], ["power", "Power & fan"], ["templates", "Templates"], ["email", "Email"], ["calendar", "Calendar"],
+  ["dashboard", "Dashboard"], ["print", "Print"], ["form", "Google Form"], ["airprint", "AirPrint"], ["shortcuts", "iPhone Shortcuts"], ["pinkpanther", "Pink Panther"], ["watchlist", "Watch list"], ["birthdays", "Birthdays"], ["messages", "Messages"], ["symbols", "Symbols"], ["power", "Power & fan"], ["templates", "Templates"], ["email", "Email"], ["calendar", "Calendar"],
   ["text", "Text & sorting"], ["aireview", "AI review"], ["rules", "Rules"], ["printer", "Printer"], ["integrations", "Integrations"],
-  ["playground", "Try it"], ["account", "Account"],
+  ["playground", "Try it"], ["backup", "Backup"], ["account", "Account"],
 ];
 function renderTabs() {
   const nav = $("#tabs"); nav.replaceChildren();
@@ -79,7 +79,7 @@ function renderTabs() {
 function go(tab) {
   TAB = tab; clearInterval(POLL); POLL = null; renderTabs();
   const main = $("#main"); main.replaceChildren();
-  ({ dashboard, print: printPage, form: formPage, airprint: airprintPage, shortcuts: shortcutsPage, pinkpanther: pinkPantherPage, watchlist: watchListPage, aireview: aiReviewPage, messages, symbols, power: powerPage, templates, email: () => simple("email", "Email account"), calendar, text: () => simple("text", "Text, dates & summaries"),
+  ({ dashboard, print: printPage, form: formPage, airprint: airprintPage, shortcuts: shortcutsPage, pinkpanther: pinkPantherPage, watchlist: watchListPage, birthdays: birthdaysPage, backup: backupPage, aireview: aiReviewPage, messages, symbols, power: powerPage, templates, email: () => simple("email", "Email account"), calendar, text: () => simple("text", "Text, dates & summaries"),
      rules, printer: () => simple("printer", "Printer"), integrations, playground, account }[tab])(main);
   window.scrollTo(0, 0);
 }
@@ -1040,6 +1040,96 @@ Text from the screenshot: `;
     if (info.symbols && info.symbols.length) tags = info.symbols.map(x => `[${x.toLowerCase()}]`).join(" ");
     draw(info);
   });
+}
+
+
+/* ---------------------------------------------------------------- Birthdays */
+const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+function birthdaysPage(main) {
+  const status = h("div", { class: "small" }), list = h("div"), msg = h("div", { class: "small", style: "margin-top:6px" });
+  const input = h("input", { type: "text", placeholder: "e.g. Sarah 14 March   or   Mum 3/4/1960", style: "flex:1;min-width:220px" });
+  let people = [];
+  const timers = {};
+  const fmtDay = iso => { const d = new Date(iso + "T00:00:00"); return d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" }); };
+  function show(r) {
+    people = r.people; CFG.birthdays.people = r.people;
+    status.replaceChildren(...[
+      h("div", { style: `font-weight:600;color:${r.enabled ? "var(--ok)" : "var(--muted)"}` }, r.enabled ? `Birthdays are ON: ${people.length} on the list, printed at ${r.print_time} on the day.` : "Switched off (tick the first box under Settings, then Save)."),
+      r.today.length ? h("div", { style: "margin-top:4px" }, "🎂 Today: ", h("strong", {}, r.today.join(", "))) : null,
+      r.upcoming.length ? h("div", { class: "muted", style: "margin-top:4px" }, "Coming up: " + r.upcoming.map(u => `${u.name} ${u.days === 0 ? "today" : u.days === 1 ? "tomorrow" : "in " + u.days + " days"} (${fmtDay(u.date)}${u.turns ? ", turns " + u.turns : ""})`).join(" · ")) : null].filter(Boolean));
+    draw();
+  }
+  async function load() { show(await api("/api/birthdays")); }
+  async function add() {
+    msg.style.color = ""; msg.textContent = "";
+    try { const r = await api("/api/birthdays", { method: "POST", json: { text: input.value } }); input.value = ""; show(r); msg.textContent = `Added ${r.added.name} (${r.added.day} ${MONTH_NAMES[r.added.month - 1]}${r.added.year ? " " + r.added.year : ""}).`; }
+    catch (e) { msg.style.color = "var(--bad)"; msg.textContent = e.message || String(e); }
+  }
+  input.addEventListener("keydown", e => { if (e.key === "Enter") add(); });
+  function save(p) {
+    clearTimeout(timers[p.id]);
+    timers[p.id] = setTimeout(async () => { try { show(await api("/api/birthdays/" + p.id, { method: "PUT", json: p })); toast("Saved"); } catch (e) { toast(e.message || String(e), true); load(); } }, 700);
+  }
+  function draw() {
+    list.replaceChildren(...people.map(p => h("div", { class: "item" }, h("div", { class: "row" },
+      h("input", { type: "checkbox", checked: p.enabled !== false, title: "Remind me", onchange: e => { p.enabled = e.target.checked; save(p); } }),
+      h("input", { type: "text", value: p.name, placeholder: "Name", style: "flex:1;min-width:120px", oninput: e => { p.name = e.target.value; save(p); } }),
+      h("input", { type: "number", min: 1, max: 31, value: p.day, style: "width:62px", title: "Day", oninput: e => { p.day = +e.target.value; save(p); } }),
+      h("select", { onchange: e => { p.month = +e.target.value; save(p); } }, MONTH_NAMES.map((n, i) => h("option", { value: i + 1, selected: p.month === i + 1 }, n))),
+      h("input", { type: "number", min: 1900, max: 2100, value: p.year || "", placeholder: "year born", style: "width:96px", title: "Year born (optional: prints their age)", oninput: e => { p.year = +e.target.value || 0; save(p); } }),
+      h("input", { type: "text", value: p.note || "", placeholder: "Note (e.g. gift idea)", style: "flex:1;min-width:130px", oninput: e => { p.note = e.target.value; save(p); } }),
+      h("button", { class: "btn small", onclick: async () => { await api("/api/birthdays-test", { method: "POST", json: { id: p.id } }); toast("Printing a sample slip"); } }, "Print now"),
+      h("button", { class: "btn small danger", onclick: async () => { if (confirm(`Remove ${p.name}?`)) show(await api("/api/birthdays/" + p.id, { method: "DELETE" })); } }, "Remove")))));
+    if (!people.length) list.append(h("div", { class: "muted" }, "No birthdays yet: add the first one above."));
+  }
+  main.append(h("div", { class: "card" }, h("h2", {}, "Birthdays"),
+    h("p", { class: "small" }, "Add the birthdays you want to be reminded of. On the day, at the time set below (7:00 am), a ", h("strong", {}, "BIRTHDAY"), " slip with the cake symbol prints for each one. If the Pi was off at that time it prints as soon as it is back that day."),
+    h("p", { class: "small" }, "Reminders you send that talk about a birthday (“Sarah's birthday on Friday”) are recognised too and print with the same BIRTHDAY look instead of the plain reminder."), status));
+  main.append(h("div", { class: "card" }, h("h3", {}, "Add a birthday"), h("div", { class: "row" }, input, h("button", { class: "btn primary", onclick: add }, "Add")),
+    h("div", { class: "small muted", style: "margin-top:4px" }, "Name and date, any order: “Sarah 14 March”, “14 Mar Dad”, “Mum 3/4/1960” (with the year born, the slip says how old they turn)."), msg));
+  main.append(h("div", { class: "card" }, h("h3", {}, "Everyone"), list));
+  main.append(h("div", { class: "card" }, h("h3", {}, "Settings"), form(SCHEMA.sections.birthdays),
+    h("div", { class: "small muted", style: "margin-top:8px" }, "The look of the slip (title, symbol size, text size) is the Birthday template on the Templates tab.")));
+  load();
+}
+
+
+/* ---------------------------------------------------------------- Backup */
+function backupPage(main) {
+  const status = h("div", { class: "small" }), files = h("div"), result = h("div", { class: "small", style: "margin-top:8px" });
+  const pw = h("input", { type: "checkbox", checked: true });
+  const pick = h("input", { type: "file", accept: ".json,application/json" });
+  async function refresh() {
+    const s = await api("/api/backup-status");
+    status.replaceChildren(h("div", {}, s.summary ? `Your settings right now: ${s.summary}.` : "Your settings right now."),
+      h("div", { class: "muted" }, s.email_enabled ? (s.last_email ? `An emailed copy was last sent ${s.last_email.replace("T", " ")}.` : "Emailed copies are on: the first one goes when the mailbox is ready.") : "Emailed copies are off (see Settings below)."),
+      s.error ? h("div", { style: "color:var(--bad)" }, "⚠ " + s.error) : null, s.email_error ? h("div", { style: "color:var(--bad)" }, "⚠ Last emailed copy: " + s.email_error) : null);
+    files.replaceChildren(...(s.files.length ? s.files.map(f => h("div", { class: "row small", style: "margin-bottom:4px" }, h("span", { style: "flex:1" }, `${f.name}  ·  ${f.time}  ·  ${Math.max(1, Math.round(f.size / 1024))} KB`),
+      h("button", { class: "btn small", onclick: async () => { if (!confirm("Go back to this saved copy? (what you have now is saved first)")) return; done(await api("/api/backup-restore-local", { method: "POST", json: { name: f.name } })); } }, "Restore"))) : [h("div", { class: "muted small" }, "No copies kept on the Pi yet.")]));
+  }
+  function done(r) { result.style.color = ""; result.textContent = r.message + (r.login_changed ? " The login is now the one from the backup: sign in again." : ""); setTimeout(() => location.reload(), 1500); }
+  refresh();
+  main.append(h("div", { class: "card" }, h("h2", {}, "Backup & restore"),
+    h("p", { class: "small" }, "Everything you set up (email connection, friends, birthdays, templates, symbols, calendars, AI and printer settings) is one small file. If the Pi's SD card ever fails, install Jack in a Box on a new card, set a password, and ", h("strong", {}, "restore this file here"), ": everything comes back."),
+    h("p", { class: "small" }, h("strong", {}, "Keep a copy off the Pi"), ": a copy on the SD card dies with the SD card. Download one now and after big changes, or switch on the emailed copy below."), status));
+  main.append(h("div", { class: "card" }, h("h3", {}, "Download a backup"),
+    h("label", { class: "row small" }, pw, "Include passwords (the printer's mailbox app password, Google Form token, web login). Needed for a complete restore; keep the file private."),
+    h("div", { class: "row", style: "margin-top:8px" }, h("button", { class: "btn primary", onclick: () => { location.href = "/api/backup?passwords=" + (pw.checked ? 1 : 0); } }, "Download backup"))));
+  main.append(h("div", { class: "card" }, h("h3", {}, "Restore from a backup file"),
+    h("div", { class: "small muted" }, "Choose a file you downloaded or received by email. What the Pi has now is saved first, and the web port is never changed."), pick,
+    h("div", { class: "row", style: "margin-top:8px" }, h("button", { class: "btn", onclick: async () => {
+      const f = pick.files[0]; if (!f) return toast("Choose the backup file first.", true);
+      let doc; try { doc = JSON.parse(await f.text()); } catch (e) { return toast("That file isn't a backup (it can't be read).", true); }
+      if (!confirm("Replace this Pi's settings with the ones in " + f.name + "?")) return;
+      try { done(await api("/api/backup-restore", { method: "POST", json: doc })); } catch (e) { result.style.color = "var(--bad)"; result.textContent = e.message || String(e); }
+    } }, "Restore")), result));
+  main.append(h("div", { class: "card" }, h("h3", {}, "Copies kept on the Pi"), files,
+    h("div", { class: "row", style: "margin-top:8px" }, h("button", { class: "btn small", onclick: async () => { await api("/api/backup-snapshot", { method: "POST" }); toast("Saved a copy"); refresh(); } }, "Save a copy now"))));
+  main.append(h("div", { class: "card" }, h("h3", {}, "Settings"), form(SCHEMA.sections.backup),
+    h("div", { class: "row", style: "margin-top:8px" }, h("button", { class: "btn", onclick: async () => {
+      if (dirty) return toast("Save first, then send.", true);
+      try { const r = await api("/api/backup-email", { method: "POST" }); toast(r.message); } catch (e) { toast(e.message || String(e), true); }
+    } }, "Email me a copy now"))));
 }
 
 

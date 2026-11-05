@@ -18,7 +18,7 @@ from flask import Flask, Response, jsonify, request, send_file, send_from_direct
 from PIL import Image, ImageOps
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from . import aifeedback, icons as icon_lib, llm, pinkpanther, plugins, schema, sheet as sheet_mod, watchlist
+from . import aifeedback, backup as backup_mod, birthdays as birthdays_mod, icons as icon_lib, llm, pinkpanther, plugins, schema, sheet as sheet_mod, watchlist
 from .config import APP_DIR, DATA_DIR, ROOT, KIND_DEFAULTS, ConfigStore, default_template, merge
 from .mailbox import MailPoller
 from .mailparse import Incoming, _load_image, parse
@@ -32,7 +32,7 @@ log = logging.getLogger("web")
 PUBLIC_API = {"/api/state", "/api/login", "/api/setup", "/api/print"}
 
 
-def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button, fan=None, power=None, sheet=None, airprint=None) -> Flask:
+def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button, fan=None, power=None, sheet=None, airprint=None, birthdays=None, backup=None) -> Flask:
     app = Flask(__name__, static_folder=str(APP_DIR / "static"), static_url_path="/static")
     app.secret_key = cfg.data["web"]["secret_key"]
     app.config.update(SESSION_COOKIE_SAMESITE="Strict", SESSION_COOKIE_HTTPONLY=True,
@@ -200,7 +200,16 @@ def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button, 
                                 "enabled": bool(f.get("enabled", True))})
         new["friends"] = friends
         new["icons"] = clean_icons(new.get("icons"))
+        new.setdefault("birthdays", {})["people"] = old["birthdays"].get("people", [])        # the list is edited only through its own endpoints
+        new["birthdays"]["print_time"] = f"{birthdays_mod.parse_hhmm(new['birthdays'].get('print_time', '07:00')):%H:%M}"
+        b = new.setdefault("backup", {})
+        b["last_email"], b["last_email_hash"] = old["backup"].get("last_email", ""), old["backup"].get("last_email_hash", "")
         cfg.replace(new)
+        apply_runtime()
+        return jsonify(public_config())
+
+    def apply_runtime() -> None:
+        """After the settings change (saved, or restored from a backup): tell the background parts to look again."""
         button.reconfigure()
         if airprint is not None:
             airprint.wake.set()                              # switch AirPrint on/off or rename it straight away
@@ -210,7 +219,10 @@ def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button, 
         cal.kick.set()
         if sheet is not None:
             sheet.kick.set()
-        return jsonify(public_config())
+        if birthdays is not None:
+            birthdays.kick.set()
+        if backup is not None:
+            backup.kick.set()
 
     @app.get("/api/schema")
     def get_schema():
@@ -747,6 +759,129 @@ def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button, 
                 c.source = "web"
                 svc.submit(c, 1)
         return jsonify(cards=out, printed=bool(b.get("print") and cards), **_pp_state())
+
+    # ------------------------------------------------------------------ Birthdays
+    def _bd_state():
+        c = cfg.data
+        now = local_now(c)
+        people = sorted(c["birthdays"].get("people", []), key=lambda p: (p["month"], p["day"], p["name"].lower()))
+        today = [p["name"] for p in people if p.get("enabled", True) and birthdays_mod.occurs_on(p, now.date())]
+        return {"enabled": bool(c["birthdays"].get("enabled")), "print_time": c["birthdays"].get("print_time", "07:00"), "people": people,
+                "upcoming": birthdays_mod.upcoming(c, now.date()), "today": today, "symbol": birthdays_mod.symbol_id(c)}
+
+    @app.get("/api/birthdays")
+    def bd_list():
+        return jsonify(_bd_state())
+
+    @app.post("/api/birthdays")
+    def bd_add():
+        text = str((request.json or {}).get("text", ""))[:300]
+        d = cfg.data
+        try:
+            p = birthdays_mod.parse_person(text, d["general"].get("date_order", "dmy"))
+        except ValueError as e:
+            return jsonify(error=str(e)), 400
+        if len(d["birthdays"]["people"]) >= 500:
+            return jsonify(error="That's a lot of birthdays (500 is the limit)."), 400
+        if any(x["name"].lower() == p["name"].lower() and x["day"] == p["day"] and x["month"] == p["month"] for x in d["birthdays"]["people"]):
+            return jsonify(error=f"{p['name']} is already on the list for that day."), 400
+        d["birthdays"]["people"].append(p)
+        cfg.replace(d)
+        if birthdays is not None:
+            birthdays.kick.set()
+        return jsonify(added=p, **_bd_state())
+
+    @app.put("/api/birthdays/<pid>")
+    def bd_update(pid):
+        d = cfg.data
+        people = d["birthdays"]["people"]
+        i = next((k for k, x in enumerate(people) if x["id"] == pid), None)
+        if i is None:
+            return jsonify(error="No such person"), 404
+        p = birthdays_mod.clean_person({**people[i], **(request.json or {}), "id": pid})
+        if p is None:
+            return jsonify(error="That needs a name and a real day and month."), 400
+        people[i] = p
+        cfg.replace(d)
+        return jsonify(**_bd_state())
+
+    @app.delete("/api/birthdays/<pid>")
+    def bd_delete(pid):
+        d = cfg.data
+        d["birthdays"]["people"] = [x for x in d["birthdays"]["people"] if x["id"] != pid]
+        cfg.replace(d)
+        return jsonify(**_bd_state())
+
+    @app.post("/api/birthdays-test")
+    def bd_test():
+        """Print one person's slip right now (to see how it looks); it doesn't count as today's print."""
+        pid = (request.json or {}).get("id")
+        p = next((x for x in cfg.data["birthdays"]["people"] if x["id"] == pid), None)
+        if p is None:
+            return jsonify(error="No such person"), 404
+        card = birthdays_mod.person_card(p, cfg.data, local_now(cfg.data))
+        card.source = "web"
+        svc.submit(card, 1)
+        return jsonify(ok=True)
+
+    # ------------------------------------------------------------------ Backup
+    def _backup_dir():
+        return svc.data_dir / "backups"
+
+    def _backup_state():
+        b = cfg.data["backup"]
+        return {"files": backup_mod.list_snapshots(_backup_dir()) if _backup_dir().exists() else [], "email_to": backup_mod.email_to(cfg.data),
+                "last_email": b.get("last_email", ""), "email_enabled": bool(b.get("email_enabled")), "mailbox_ready": bool(cfg.data["email"].get("username") and cfg.data["email"].get("password")),
+                "error": (backup.status.get("error") if backup else "") or "", "email_error": (backup.status.get("last_email_error") if backup else "") or "",
+                "summary": backup_mod.summary(cfg.data)}
+
+    @app.get("/api/backup")
+    def backup_download():
+        doc = backup_mod.make_backup(cfg.data, request.args.get("passwords", "1") != "0")
+        return Response(backup_mod.dumps(doc), mimetype="application/json", headers={"Content-Disposition": f'attachment; filename="{backup_mod.file_name()}"'})
+
+    @app.get("/api/backup-status")
+    def backup_status():
+        return jsonify(_backup_state())
+
+    def _do_restore(payload):
+        try:
+            res = backup_mod.restore(cfg, payload, _backup_dir())
+        except backup_mod.BackupError as e:
+            return jsonify(error=str(e)), 400
+        apply_runtime()
+        if res["login_changed"]:
+            session.clear()                                  # the restored settings carry their own web password
+        return jsonify(ok=True, message="Settings restored" + (f" ({res['summary']})" if res["summary"] else "") + ".", login_changed=res["login_changed"], kept=res["kept"])
+
+    @app.post("/api/backup-restore")
+    def backup_restore():
+        if (request.content_length or 0) > backup_mod.MAX_BYTES:
+            return jsonify(error="That file is too big to be a backup."), 413
+        return _do_restore(request.get_json(silent=True))
+
+    @app.post("/api/backup-restore-local")
+    def backup_restore_local():
+        try:
+            payload = backup_mod.read_snapshot(_backup_dir(), str((request.json or {}).get("name", "")))
+        except backup_mod.BackupError as e:
+            return jsonify(error=str(e)), 400
+        return _do_restore(payload)
+
+    @app.post("/api/backup-snapshot")
+    def backup_snapshot():
+        p = backup_mod.write_snapshot(cfg.data, _backup_dir(), "config")
+        for old in sorted(_backup_dir().glob("config-*.json"), reverse=True)[max(1, int(cfg.data["backup"].get("keep", 7))):]:
+            old.unlink(missing_ok=True)
+        return jsonify(ok=True, name=p.name, **_backup_state())
+
+    @app.post("/api/backup-email")
+    def backup_email():
+        try:
+            to = backup_mod.send_email_backup(cfg.data)
+        except backup_mod.BackupError as e:
+            return jsonify(error=str(e)), 400
+        return jsonify(ok=True, message=f"Sent to {to}.")
 
     # ------------------------------------------------------------------ Watch list (movies / TV shows)
     @app.get("/api/watchlist")

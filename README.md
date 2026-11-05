@@ -542,6 +542,34 @@ From "sent" to paper there are four steps, and only one is slow by nature:
 Your older saved settings were moved to these faster ones once (a change you make afterwards is kept). The log shows where the time went: `journalctl -u jack-in-a-box -n 30` has lines like
 `Email 'Watch list' -> 1 slip(s) queued in 0.4s (reading 0.0s, building 0.1s, drawing 0.3s)` and `Printed #12 'Dune' (3s after it was queued)`.
 
+## Birthdays
+
+The **Birthdays** tab holds a list of birthdays. On the day, at **7:00 am** (change it under *Print at*), a **BIRTHDAY** slip prints for each person: the cake symbol, their name big, and "Turns 41 today"
+(if you gave the year they were born) plus an optional note such as a gift idea. If the Pi was off at 7:00 it prints as soon as it is back that same day (switchable). Each person prints once a day
+however many times the Pi restarts, and 29 February people are remembered on 28 February in years with no 29th.
+
+* **Adding one:** type the name and date in any order: `Sarah 14 March`, `14 Mar Dad`, `Mum 3/4/1960` (day first, or month first if *Text & sorting -> date order* is set that way). Edit the name, date, year,
+  note or the on/off tick in the list; *Print now* prints a sample slip to see how it looks.
+* **Recognising birthday reminders:** a reminder (email, Google Form, iPhone Shortcut, web *Print*) or a calendar event that talks about a birthday (`Sarah's birthday on Friday`, `birthday: Mum`, `Tom turns 8`)
+  is printed with the BIRTHDAY look instead of the plain reminder one. Nothing you wrote is removed, and if there is no heading the name is used as one. Friends' messages, email summaries and templates you
+  chose yourself are left alone. Switch it off with *Give birthday reminders the BIRTHDAY template*.
+* **Learning from reminders (off by default):** with *Add birthdays that come with a date to my list* on, `Sarah's birthday is 14 March` also adds Sarah to the list (once), so she comes round every year.
+* **Look:** the *Birthday* template on the Templates tab (title, symbol size, fonts); the symbol is the cake unless you set another under *Symbol on the slip*.
+
+## Backing up your settings
+
+If the SD card ever fails, you will want your settings back: the email connection, friends, birthdays, templates, symbols, calendars, AI and printer settings. The **Backup** tab saves all of it as one small
+file.
+
+* **Download a backup** any time (and after big changes). By default it includes your passwords (the printer mailbox's app password, the Google Form token, the web login), so a restore needs nothing
+  retyped: **keep the file private**. Untick *Include passwords* and they are left out; restoring such a file keeps the passwords the Pi already has.
+* **Restore:** on a new SD card, install Jack in a Box, open the page, set any password, go to **Backup**, choose the file and press *Restore*. If the file carries the old web login, you sign in with that
+  one afterwards. The Pi saves what it had first (`data/backups/before-restore-*.json`) and never changes its web port from a backup.
+* **Copies on the Pi:** the last 7 (changeable) are kept in `data/backups/` whenever something changed, and you can restore any of them with one click. That protects against a bad edit, **not** a dead SD card.
+* **Emailed copy (off by default):** *Email me a copy of my settings* sends the file from the printer's own mailbox to your first admin address (or another you type) whenever something has changed, at most
+  every 7 days. It includes passwords unless you untick that, so it should go to an inbox only you can read. *Email me a copy now* tries it straight away and says plainly what is wrong if it can't.
+* Not backed up: the print history and the saved pictures (they are only the past), and the Pi itself (Wi-Fi, the install): those take a few minutes to redo.
+
 ## Power, cooling and the email mailbox
 
 **What it costs to run:** a Pi 3B+ idles around 2-3 W, roughly 20-25 kWh a year, which is about **$6-9 a year** at ~30c/kWh. The printer only

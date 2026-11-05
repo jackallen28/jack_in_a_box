@@ -6,6 +6,8 @@ import socket
 import sys
 
 from . import plugins
+from .backup import BackupService
+from .birthdays import BirthdayService
 from .calsync import CalendarSync
 from .config import ConfigStore
 from .gpio import ButtonController
@@ -51,7 +53,10 @@ def main() -> None:
     from .airprint import AirPrintService
     airprint = AirPrintService(cfg, svc)
     airprint.start()
-    app = create_app(cfg, svc, poller, cal, button, fan, power, sheet, airprint)
+    birthdays, backup = BirthdayService(cfg, svc), BackupService(cfg, svc)
+    birthdays.start()
+    backup.start()
+    app = create_app(cfg, svc, poller, cal, button, fan, power, sheet, airprint, birthdays, backup)
 
     port = int(cfg.data["web"].get("port", 8080))
     log = logging.getLogger("app")

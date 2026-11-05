@@ -12,7 +12,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-from . import aifeedback, plugins
+from . import aifeedback, birthdays, plugins
 from .config import DATA_DIR, ConfigStore
 from .db import DB
 from .models import Card
@@ -57,6 +57,12 @@ class Service:
         """Queue a printout.  ``hold`` waits for the button; ``due`` (a timezone-aware time in the future) waits until then.
         Either way it is in the queue straight away, so you can see it, cancel it, or press Print now."""
         self.touch()
+        try:
+            card = birthdays.restyle(card, self.cfg.data)            # a reminder about a birthday gets the BIRTHDAY template
+            if card.kind == "birthday" and card.source != "birthday":
+                birthdays.learn(card, self.cfg)
+        except Exception:
+            log.exception("Birthday recognition failed (printing the slip as it was)")
         later = due is not None and due > datetime.now(timezone.utc)
         status = "held" if hold else "scheduled" if later else "pending"
         img = self.render(card)
