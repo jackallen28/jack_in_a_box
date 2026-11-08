@@ -12,8 +12,10 @@ init, raster image (GS v 0), feed and cut.  Transport options:
 from __future__ import annotations
 
 import glob
+import ipaddress
 import os
 import socket
+import subprocess
 import threading
 import time
 from datetime import datetime
@@ -126,6 +128,53 @@ def resolve_backend(cfg: dict) -> tuple[str, str]:
     return backend, device
 
 
+# ---------------------------------------------------------------------------- why can't the Ethernet printer be reached?
+def _eth_carrier(iface: str = "eth0") -> bool | None:
+    """Is a cable plugged in and the other end alive?  None = this machine has no such port (or can't say)."""
+    try:
+        return (Path("/sys/class/net") / iface / "carrier").read_text().strip() == "1"
+    except OSError:
+        return None
+
+
+def _local_ipv4s() -> list[tuple[str, "ipaddress.IPv4Interface"]]:
+    """[(interface, address/prefix)] of this machine."""
+    try:
+        out = subprocess.run(["ip", "-o", "-4", "addr", "show"], capture_output=True, text=True, timeout=3).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    found = []
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) >= 4 and parts[2] == "inet":
+            try:
+                found.append((parts[1], ipaddress.IPv4Interface(parts[3])))
+            except ValueError:
+                pass
+    return found
+
+
+def network_hint(host: str) -> str:
+    """A plain-language reason the printer at ``host`` didn't answer, from what this Pi can see of its own Ethernet port (blank if unsure)."""
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return ""
+    if ip.version != 4 or not ip.is_private:
+        return ""
+    carrier = _eth_carrier()
+    same = [(i, a) for i, a in _local_ipv4s() if ip in a.network]
+    on_eth = any(i == "eth0" for i, _ in same)
+    if carrier is False and (on_eth or not same):
+        return ("The Pi's Ethernet port has no link: nothing is answering at the other end of the cable. Check the cable is pushed in at BOTH ends "
+                "(try another cable), the printer is switched on, and give it a minute after power-on.")
+    if not same:
+        return (f"The Pi isn't on {host}'s network yet (none of its network ports has an address in that range). If the printer is cabled straight to the Pi's "
+                "Ethernet port, run this once over SSH:  bash ~/jack_in_a_box/deploy/printer-ethernet.sh")
+    return ("The Pi can see that network but the printer isn't answering at that address. Check the IP against the printer's self-test sheet "
+            "(hold FEED while switching it on), and that nothing else is using the address.")
+
+
 def check(cfg: dict) -> tuple[bool, str]:
     """Is the printer reachable?  (Does not print.)"""
     backend, device = resolve_backend(cfg)
@@ -144,7 +193,8 @@ def check(cfg: dict) -> tuple[bool, str]:
         try:
             socket.create_connection((host, port), timeout=3).close()
         except OSError as e:
-            return False, f"Can't reach {host}:{port} ({e}). Check the cable, the printer's IP, and the Pi's Ethernet setup."
+            hint = network_hint(host)
+            return False, f"Can't reach {host}:{port} ({e}). " + (hint or "Check the cable, the printer's IP, and the Pi's Ethernet setup.")
         return True, f"Network printer answered at {host}:{port}."
     if backend == "usb":
         try:

@@ -1144,14 +1144,31 @@ function wizard(rerun) {
         { next: async () => { try { await saveFeatures(sel, false); } catch (e) { return toast(e.message || String(e), true); } advance(); }, nextLabel: "Next", back: false, skip: null });
     },
     printer() {
-      const res = msgBox();
+      const res = msgBox(), pr = CFG.printer;
       const show = (m, ok) => { res.textContent = m; res.style.color = ok ? "var(--ok)" : "var(--bad)"; };
-      frame(h("div", {}, h("h2", {}, "Connect the printer"),
-        h("p", {}, "Plug the Epson TM-T82II into one of the Pi's USB ports, load paper, and switch it on. It is found automatically."),
+      let mode = pr.backend === "network" ? ((pr.host || "") === "192.168.192.168" || !pr.host ? "cable" : "lan") : "usb";
+      const body = h("div"), ip = h("input", { type: "text", value: pr.host || "", placeholder: "192.168.192.168", oninput: e => { pr.host = e.target.value.trim(); } });
+      const apply = () => { if (mode === "usb") { pr.backend = "auto"; } else { pr.backend = "network"; pr.port = pr.port || 9100; if (mode === "cable" && !pr.host) { pr.host = "192.168.192.168"; ip.value = pr.host; } } };
+      const picks = [["usb", "USB cable to the Pi (the usual way)"], ["cable", "Ethernet cable straight from the printer to the Pi's Ethernet port"], ["lan", "The printer is on my router / network (it has its own IP address)"]];
+      function drawBody() {
+        body.replaceChildren(
+          mode === "usb" ? h("p", { class: "small" }, "Plug the Epson TM-T82II into one of the Pi's USB ports, load paper and switch it on. It is found automatically.") : null,
+          mode === "cable" ? h("div", { class: "small" }, h("p", {}, "Cable the printer's Ethernet port to the Pi's Ethernet port (Wi-Fi keeps working for everything else), switch the printer on and give it a minute. Then, ", h("strong", {}, "once"), ", on the Pi over SSH:"),
+            h("pre", { style: "background:var(--bg,#f4f1ec);padding:8px;border-radius:6px;overflow-x:auto;user-select:all" }, "bash ~/jack_in_a_box/deploy/printer-ethernet.sh"),
+            h("p", { class: "muted" }, "That gives the Pi's Ethernet port its address for the printer (a fresh SD card needs this again). If a check below still fails, run ", h("code", {}, "bash ~/jack_in_a_box/deploy/printer-diagnose.sh"), " and it says what's wrong.")) : null,
+          mode !== "usb" ? h("div", { class: "f" }, h("label", { class: "l" }, "The printer's IP address"), ip,
+            h("div", { class: "help" }, mode === "cable" ? "Epson network cards with no router answer at 192.168.192.168. Hold FEED while switching the printer on to print a sheet that shows it." : "Hold FEED while switching the printer on to print a sheet showing its IP address.")) : null);
+      }
+      const choose = h("div", {}, ...picks.map(([v, t]) => h("label", { style: "display:flex;gap:8px;align-items:flex-start;margin:6px 0;cursor:pointer" },
+        h("input", { type: "radio", name: "conn", checked: v === mode, onchange: () => { mode = v; apply(); drawBody(); } }), h("span", {}, t))));
+      apply(); drawBody();
+      const persist = async () => { apply(); await saveCfg(); };
+      frame(h("div", {}, h("h2", {}, "Connect the printer"), choose, body,
         h("div", { class: "row" },
-          h("button", { class: "btn", onclick: async () => { show("Looking…", true); const r = await api("/api/printer-check", { method: "POST" }); show(r.message, r.ok); } }, "Check the connection"),
-          h("button", { class: "btn", onclick: async () => { try { await api("/api/test-print", { method: "POST", json: { template: "reminder" } }); show("A test slip is on its way.", true); } catch (e) { show(e.message, false); } } }, "Print a test slip")), res,
-        h("p", { class: "small muted" }, "Nothing happening? You can carry on: the printer settings are on the Printer tab later.")), { next: advance });
+          h("button", { class: "btn", onclick: async () => { show("Looking…", true); try { await persist(); const r = await api("/api/printer-check", { method: "POST" }); show(r.message, r.ok); } catch (e) { show(e.message, false); } } }, "Check the connection"),
+          h("button", { class: "btn", onclick: async () => { try { await persist(); await api("/api/test-print", { method: "POST", json: { template: "reminder" } }); show("A test slip is on its way.", true); } catch (e) { show(e.message, false); } } }, "Print a test slip")), res,
+        h("p", { class: "small muted" }, "Nothing happening? You can carry on: everything here is on the Printer tab later.")),
+        { next: async () => { try { await persist(); } catch (e) { return toast(e.message || String(e), true); } advance(); } });
     },
     email() {
       const e = CFG.email, res = msgBox();

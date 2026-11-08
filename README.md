@@ -655,6 +655,14 @@ calendar sync, SSH and the config page all keep using Wi-Fi exactly as before. T
 
 If you set the connection to *Automatic* the app uses USB when a USB printer is present, otherwise the network IP.
 
+**A fresh SD card (or a rebuilt Pi) forgets all of this**: run `printer-ethernet.sh` again and set Connection = *Network* and the IP again (the setup guide's printer step does the second part for you; restoring a
+backup also brings the printer settings back). The Ethernet cable setup is not part of a backup because it lives in the Pi's own network settings.
+
+**It still can't connect?** Run `bash ~/jack_in_a_box/deploy/printer-diagnose.sh` (it changes nothing). It reports the cable link, the Pi's addresses, whether the printer answers on port 9100 and what the app is set
+to, then says in one line what to fix. The *Check connection* button gives the same reason in plain words. Most common causes, in order: the cable isn't live (reseat both ends, try another cable, give the printer
+a minute after power-on); the Pi's Ethernet port has no address (run the script); the printer isn't at the IP you typed (print its self-test sheet: hold FEED while powering on); or the printer is USB-only and
+has no network card at all (then use USB).
+
 ## Printer notes (TM-T82II)
 * Paper is 80 mm wide but the printable area is **72 mm (576 dots at 203 dpi)**. Printouts are therefore 72 mm wide and
   at least 30 mm tall, growing with content (it used to be 80 mm: your saved templates were moved to 30 once, and a value you set afterwards is kept). Adjustable per template (*Minimum height*).
