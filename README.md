@@ -63,11 +63,29 @@ for the AI and installs Ollama plus the small model (about 10-20 minutes, mostly
 needed (the repo is public). Leave off `--with-ai --reboot` for a plain install without the AI; add the AI later with
 `bash ~/jack_in_a_box/deploy/enable-ai.sh`.
 
-**4. In your browser** (a minute after the reboot): `http://jack-in-a-box.local:8080` -> choose a password -> **Printer** tab (*Check connection*, *Print a test
-reminder*) -> **Email** (first box, *Who can email the printer?*: **your own address**; then the printer's Gmail address + app password) -> **Calendar** (iCal link) -> **Messages** (friends, button) ->
-**Text & sorting** -> *Test AI summary*, and when it works press **Switch on AI mode**.
+**4. In your browser** (a minute after the reboot): `http://jack-in-a-box.local:8080` -> choose a password -> the **setup guide** starts by itself (see below): pick your features, connect the
+printer, then the email and calendar. Have the printer's Gmail address and app password, and your calendar's iCal address, ready.
 
 The AI is installed but **OFF** until you press that button, so the box works with the built-in summary from the first minute.
+
+### The first-time setup guide, and Settings
+
+After you choose a password the first time, a short guide (about 3 minutes) runs:
+
+1. **What do you want it to do?** A list of features with one plain sentence each: *Print from email*, *Calendar events* and *Symbols* are ticked for you; *Messages from friends + the button*, *Birthdays*,
+   *Google Form*, *iPhone Shortcuts*, *AirPrint*, *Pink Panther*, *Watch list*, *AI summaries*, *Power and fan* and *Integrations* are yours to tick or leave. (Restoring from a backup? Open
+   *I already have a backup file* here and you can skip the rest.)
+2. **Printer:** check the connection and print a test slip.
+3. **Email** (if chosen): your own address (the only one allowed to email the printer), the printer's Gmail address and app password, with a *Test connection* button.
+4. **Calendar** (if chosen): your Google Calendar's iCal address and the time events print, with a test button.
+5. **All set:** the features that need more (Google Form, AirPrint, friends, birthdays ...) are listed with an *Open* button each, so they are only set up if you wanted them. Nothing you skip is lost.
+
+**Only the features you chose get a tab in the top menu, and only they run**: a Google Form you didn't choose is never polled, AirPrint is never advertised, friends' messages and the print API are ignored, Pink
+Panther, Watch list and Birthdays leave your reminders alone. Printer, Templates, Try it, Backup, Settings and Account are always there.
+
+The **Settings** tab lists every feature with a switch. Switching one on adds its tab straight away (with an *Open* button); switching one off only hides it and stops it running, so everything you set up for
+it is kept and is still there if you switch it back on. *Run the setup guide again* is there too. A Pi set up before the guide existed is treated as having everything on, so nothing disappears when it
+updates.
 
 ## Install on an existing Raspberry Pi OS
 

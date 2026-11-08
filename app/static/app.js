@@ -15,7 +15,7 @@ function h(tag, attrs, ...kids) {
   return e;
 }
 
-let CFG = null, SAVED = null, SCHEMA = null, TAB = "dashboard", TPL = "reminder", dirty = false, previewTimer = null;
+let CFG = null, SAVED = null, SCHEMA = null, FEAT = { catalog: [], features: {}, tabs: [] }, TAB = "dashboard", TPL = "reminder", dirty = false, previewTimer = null;
 let POLL = null;
 
 async function api(path, opts = {}) {
@@ -70,16 +70,18 @@ $("#logout").addEventListener("click", async () => { await api("/api/logout", { 
 const TABS = [
   ["dashboard", "Dashboard"], ["print", "Print"], ["form", "Google Form"], ["airprint", "AirPrint"], ["shortcuts", "iPhone Shortcuts"], ["pinkpanther", "Pink Panther"], ["watchlist", "Watch list"], ["birthdays", "Birthdays"], ["messages", "Messages"], ["symbols", "Symbols"], ["power", "Power & fan"], ["templates", "Templates"], ["email", "Email"], ["calendar", "Calendar"],
   ["text", "Text & sorting"], ["aireview", "AI review"], ["rules", "Rules"], ["printer", "Printer"], ["integrations", "Integrations"],
-  ["playground", "Try it"], ["backup", "Backup"], ["account", "Account"],
+  ["playground", "Try it"], ["backup", "Backup"], ["settings", "Settings"], ["account", "Account"],
 ];
+const tabVisible = id => !FEAT.tabs.length || FEAT.tabs.includes(id);        // only the features you set up have a tab
 function renderTabs() {
   const nav = $("#tabs"); nav.replaceChildren();
-  for (const [id, label] of TABS) nav.append(h("button", { class: id === TAB ? "on" : "", onclick: () => go(id) }, label));
+  for (const [id, label] of TABS) if (tabVisible(id)) nav.append(h("button", { class: id === TAB ? "on" : "", onclick: () => go(id) }, label));
 }
 function go(tab) {
+  if (!tabVisible(tab)) tab = "dashboard";
   TAB = tab; clearInterval(POLL); POLL = null; renderTabs();
   const main = $("#main"); main.replaceChildren();
-  ({ dashboard, print: printPage, form: formPage, airprint: airprintPage, shortcuts: shortcutsPage, pinkpanther: pinkPantherPage, watchlist: watchListPage, birthdays: birthdaysPage, backup: backupPage, aireview: aiReviewPage, messages, symbols, power: powerPage, templates, email: () => simple("email", "Email account"), calendar, text: () => simple("text", "Text, dates & summaries"),
+  ({ dashboard, print: printPage, form: formPage, airprint: airprintPage, shortcuts: shortcutsPage, pinkpanther: pinkPantherPage, watchlist: watchListPage, birthdays: birthdaysPage, backup: backupPage, settings: settingsPage, aireview: aiReviewPage, messages, symbols, power: powerPage, templates, email: () => simple("email", "Email account"), calendar, text: () => simple("text", "Text, dates & summaries"),
      rules, printer: () => simple("printer", "Printer"), integrations, playground, account }[tab])(main);
   window.scrollTo(0, 0);
 }
@@ -827,8 +829,9 @@ async function boot() {
   const st = await api("/api/state");
   if (st.setup_needed) return showGate(true);
   if (!st.logged_in) return showGate(false);
-  [CFG, SCHEMA] = await Promise.all([api("/api/config"), api("/api/schema")]);
+  [CFG, SCHEMA, FEAT] = await Promise.all([api("/api/config"), api("/api/schema"), api("/api/features")]);
   SAVED = JSON.parse(JSON.stringify(CFG));
+  if (!CFG.setup_complete) return wizard();                      // first use: the short setup guide
   go(TAB);
 }
 boot().catch(e => { if (e.message !== "login") console.error(e); });
@@ -1040,6 +1043,174 @@ Text from the screenshot: `;
     if (info.symbols && info.symbols.length) tags = info.symbols.map(x => `[${x.toLowerCase()}]`).join(" ");
     draw(info);
   });
+}
+
+
+/* ---------------------------------------------------------------- features: the Settings tab and the first-run setup guide */
+const FEATURE_TAB = { email: "email", calendar: "calendar", symbols: "symbols", messages: "messages", birthdays: "birthdays", form: "form", shortcuts: "shortcuts", airprint: "airprint",
+  pinkpanther: "pinkpanther", watchlist: "watchlist", ai: "text", power: "power", integrations: "integrations" };
+const FEATURE_NEXT = {   // what is left to do for a feature that has no step in the guide
+  symbols: "Nothing to set up: put a tag like [school] or [!] in a subject.", messages: "Add your friends' addresses on the Messages tab.", birthdays: "Add the birthdays you want on the Birthdays tab.",
+  form: "Connect your Google Form on the Google Form tab (you paste a short script into the form).", shortcuts: "Switch on the print API on the iPhone Shortcuts tab.", airprint: "Switch it on in the AirPrint tab.",
+  pinkpanther: "Nothing to set up: email an episode name with “Pink Panther” in the subject.", watchlist: "Nothing to set up: email a movie or show name, with “watch list” in the subject.",
+  ai: "Install it and press “Switch on AI mode” on the Text & sorting tab.", power: "Set the fan and idle power-off on the Power & fan tab.", integrations: "Webhooks and plugins are on the Integrations tab." };
+const cloneJSON = o => JSON.parse(JSON.stringify(o));
+
+async function saveFeatures(selection, complete) {
+  FEAT = await api("/api/features", { method: "PUT", json: { features: selection, complete: !!complete } });
+  CFG.features = cloneJSON(FEAT.features); SAVED.features = cloneJSON(FEAT.features);
+  if (complete) { CFG.setup_complete = true; SAVED.setup_complete = true; }
+  return FEAT;
+}
+async function saveCfg() {                                       // the guide saves each page as you go
+  const r = await api("/api/config", { method: "PUT", json: CFG });
+  CFG = r; SAVED = cloneJSON(r); $("#savebar").hidden = true;
+}
+
+function featureRow(f, checked, onchange, extra) {
+  const box = h("input", { type: "checkbox", checked, onchange: e => onchange(e.target.checked) });
+  return h("label", { class: "item", style: "display:flex;gap:12px;align-items:flex-start;cursor:pointer;margin-bottom:8px" }, box,
+    h("div", { style: "flex:1" }, h("div", { style: "font-weight:600" }, f.title, f.recommended ? h("span", { class: "muted small", style: "font-weight:400" }, "  · recommended") : null),
+      h("div", { class: "small muted" }, f.blurb)), extra);
+}
+
+function settingsPage(main) {
+  const list = h("div");
+  function draw() {
+    list.replaceChildren(...FEAT.catalog.map(f => featureRow(f, !!FEAT.features[f.id], async on => {
+      const sel = { ...FEAT.features, [f.id]: on };
+      try {
+        await saveFeatures(sel, false); renderTabs();
+        toast(on ? `${f.title} added${FEATURE_TAB[f.id] ? " to the top menu" : ""}.` : `${f.title} hidden (your settings for it are kept).`);
+        draw();
+      } catch (e) { toast(e.message || String(e), true); draw(); }
+    }, FEAT.features[f.id] && FEATURE_TAB[f.id] ? h("button", { class: "btn small", onclick: e => { e.preventDefault(); go(FEATURE_TAB[f.id]); } }, "Open") : null)));
+  }
+  draw();
+  main.append(h("div", { class: "card" }, h("h2", {}, "Settings"),
+    h("p", { class: "small" }, "Choose what this Jack in a Box does. ", h("strong", {}, "Only the features switched on here appear in the top menu and run."),
+      " Switching one off just hides it: everything you set up for it is kept, and switching it back on finds it as it was. Printer, templates, backup and your account are always there.")));
+  main.append(h("div", { class: "card" }, h("h3", {}, "Features"), list));
+  main.append(h("div", { class: "card" }, h("h3", {}, "Setup guide"),
+    h("p", { class: "small muted" }, "The short guide that runs the first time: choose features, connect the printer, email and calendar. It keeps what you have set up."),
+    h("button", { class: "btn", onclick: () => wizard(true) }, "Run the setup guide again")));
+}
+
+function wizard(rerun) {
+  const main = $("#main"); clearInterval(POLL); POLL = null;
+  $("#tabs").hidden = true; $("#savebar").hidden = true;
+  const cat = FEAT.catalog;
+  let sel = {};
+  const chosenAlready = Object.values(FEAT.features || {}).some(Boolean);
+  for (const f of cat) sel[f.id] = chosenAlready ? !!FEAT.features[f.id] : !!f.recommended;
+  let step = "welcome";
+  const stepsFor = () => ["welcome", "printer", ...(sel.email ? ["email"] : []), ...(sel.calendar ? ["calendar"] : []), "finish"];
+  const names = { welcome: "What do you want it to do?", printer: "Printer", email: "Email", calendar: "Calendar", finish: "All set" };
+  const msgBox = () => h("div", { class: "small", style: "margin-top:8px;min-height:1.2em" });
+
+  async function finish(goTab) {
+    try { await saveFeatures(sel, true); } catch (e) { return toast(e.message || String(e), true); }
+    $("#tabs").hidden = false; go(goTab || "dashboard");
+  }
+  function frame(body, { next, nextLabel = "Next", back = true, skip = "Skip this step" } = {}) {
+    const steps = stepsFor(), i = steps.indexOf(step);
+    const dots = h("div", { class: "small muted", style: "margin-bottom:6px" }, `Step ${i + 1} of ${steps.length}: ${names[step]}`);
+    const nav = h("div", { class: "row", style: "margin-top:16px;gap:8px" },
+      back && i > 0 ? h("button", { class: "btn", onclick: () => { step = steps[i - 1]; draw(); } }, "Back") : null,
+      h("span", { style: "flex:1" }),
+      skip && step !== "finish" ? h("button", { class: "btn ghost", onclick: () => { step = steps[Math.min(i + 1, steps.length - 1)]; draw(); } }, skip) : null,
+      next ? h("button", { class: "btn primary", onclick: next }, nextLabel) : null);
+    main.replaceChildren(h("div", { class: "card", style: "max-width:760px;margin:0 auto" }, dots, body, nav,
+      step !== "finish" ? h("div", { class: "small muted", style: "margin-top:12px" }, rerun ? h("a", { href: "#", onclick: e => { e.preventDefault(); $("#tabs").hidden = false; go("settings"); } }, "Leave the guide")
+        : h("a", { href: "#", onclick: e => { e.preventDefault(); if (confirm("Skip the guide? The recommended features are switched on; you can change them later on the Settings tab.")) finish(); } }, "Skip the guide")) : null));
+    window.scrollTo(0, 0);
+  }
+  const advance = () => { const s = stepsFor(); step = s[Math.min(s.indexOf(step) + 1, s.length - 1)]; draw(); };
+
+  const pages = {
+    welcome() {
+      const file = h("input", { type: "file", accept: ".json,application/json" }), res = msgBox();
+      const restore = h("details", { style: "margin-top:12px" }, h("summary", {}, "I already have a backup file"), h("div", { class: "in small", style: "margin-top:8px" },
+        "Choose the file you downloaded from the Backup tab (or an old card's jack_in_a_box/data/config.json) and everything comes back: you can skip the rest of this guide.", h("br"), file,
+        h("div", { style: "margin-top:6px" }, h("button", { class: "btn", onclick: async () => {
+          const f = file.files[0]; if (!f) return toast("Choose the file first.", true);
+          let doc; try { doc = JSON.parse(await f.text()); } catch (e) { return toast("That file can't be read as a backup.", true); }
+          try { const r = await api("/api/backup-restore", { method: "POST", json: doc }); res.style.color = ""; res.textContent = r.message + (r.login_changed ? " Sign in with the password from the backup." : ""); setTimeout(() => location.reload(), 1400); }
+          catch (e) { res.style.color = "var(--bad)"; res.textContent = e.message || String(e); }
+        } }, "Restore")), res));
+      frame(h("div", {}, h("h2", {}, rerun ? "Setup guide" : "Welcome to Jack in a Box 👋"),
+        h("p", {}, "This short guide (about 3 minutes) gets you printing. First choose what you want it to do: only those features get a tab in the menu, and you can add more any time on the ", h("strong", {}, "Settings"), " tab."),
+        h("div", { style: "margin-top:12px" }, ...cat.map(f => featureRow(f, sel[f.id], on => { sel[f.id] = on; }))), restore),
+        { next: async () => { try { await saveFeatures(sel, false); } catch (e) { return toast(e.message || String(e), true); } advance(); }, nextLabel: "Next", back: false, skip: null });
+    },
+    printer() {
+      const res = msgBox();
+      const show = (m, ok) => { res.textContent = m; res.style.color = ok ? "var(--ok)" : "var(--bad)"; };
+      frame(h("div", {}, h("h2", {}, "Connect the printer"),
+        h("p", {}, "Plug the Epson TM-T82II into one of the Pi's USB ports, load paper, and switch it on. It is found automatically."),
+        h("div", { class: "row" },
+          h("button", { class: "btn", onclick: async () => { show("Looking…", true); const r = await api("/api/printer-check", { method: "POST" }); show(r.message, r.ok); } }, "Check the connection"),
+          h("button", { class: "btn", onclick: async () => { try { await api("/api/test-print", { method: "POST", json: { template: "reminder" } }); show("A test slip is on its way.", true); } catch (e) { show(e.message, false); } } }, "Print a test slip")), res,
+        h("p", { class: "small muted" }, "Nothing happening? You can carry on: the printer settings are on the Printer tab later.")), { next: advance });
+    },
+    email() {
+      const e = CFG.email, res = msgBox();
+      const admin = h("textarea", { placeholder: "you@example.com", style: "min-height:56px", oninput: ev => { e.allowed_senders = ev.target.value.split(/[\n,;]+/).map(x => x.trim()).filter(Boolean); } }, (e.allowed_senders || []).join("\n"));
+      const user = h("input", { type: "text", value: e.username || "", placeholder: "printer.yourname@gmail.com", autocomplete: "off", oninput: ev => { e.username = ev.target.value.trim(); } });
+      const pass = h("input", { type: "password", value: "", autocomplete: "new-password", placeholder: e.password_set ? "(saved: leave blank to keep)" : "16-letter app password", oninput: ev => { e.password = ev.target.value; } });
+      const persist = async () => { if (e.username && (e.password || e.password_set)) e.enabled = true; await saveCfg(); };
+      frame(h("div", {}, h("h2", {}, "Print from email"),
+        h("p", {}, "The printer has its own email address (a Gmail account just for it). Anything you email to it prints. Only addresses you list below are allowed."),
+        h("div", { class: "f" }, h("label", { class: "l" }, "Your email address (one per line)"), admin, h("div", { class: "help" }, "The address(es) you'll send from. Everyone else is ignored (friends can be added later).")),
+        h("div", { class: "f" }, h("label", { class: "l" }, "The printer's Gmail address"), user),
+        h("div", { class: "f" }, h("label", { class: "l" }, "App password"), pass),
+        h("details", { style: "margin:8px 0" }, h("summary", {}, "How do I get an app password?"), h("ol", { class: "small", style: "margin-top:6px" },
+          h("li", {}, "Create a new Gmail account just for the printer."), h("li", {}, "Turn on 2-Step Verification for it."),
+          h("li", {}, "Go to myaccount.google.com/apppasswords and create an app password: paste the 16 letters above."), h("li", {}, "IMAP is on by default in Gmail."))),
+        h("div", { class: "row" }, h("button", { class: "btn", onclick: async () => {
+          res.textContent = "Saving and connecting…"; res.style.color = "";
+          try { await persist(); const r = await api("/api/test-email", { method: "POST" }); res.textContent = r.message; res.style.color = r.ok ? "var(--ok)" : "var(--bad)"; } catch (err) { res.textContent = err.message; res.style.color = "var(--bad)"; }
+        } }, "Test connection")), res),
+        { next: async () => { try { await persist(); } catch (err) { return toast(err.message || String(err), true); } advance(); }, skip: "I'll do this later" });
+    },
+    calendar() {
+      const cal = CFG.calendars[0] || { id: Math.random().toString(36).slice(2, 10), name: "My calendar", url: "", enabled: true, template: "calendar" };
+      const res = msgBox();
+      const url = h("input", { type: "url", value: cal.url, placeholder: "https://calendar.google.com/calendar/ical/…/basic.ics", oninput: ev => { cal.url = ev.target.value.trim(); } });
+      const when = h("input", { type: "time", value: CFG.calendar.print_time || "07:00", onchange: ev => { CFG.calendar.print_time = ev.target.value || "07:00"; } });
+      const persist = async () => { if (cal.url) { cal.enabled = true; if (!CFG.calendars.includes(cal)) CFG.calendars.push(cal); } await saveCfg(); };
+      frame(h("div", {}, h("h2", {}, "Calendar events"),
+        h("p", {}, "Paste your Google Calendar's iCal address and each event prints on a slip the morning of it (and, if you like, the day before)."),
+        h("div", { class: "f" }, h("label", { class: "l" }, "iCal address"), url,
+          h("div", { class: "help" }, "In Google Calendar: Settings → your calendar → Integrate calendar → “Secret address in iCal format” (or the public one). Keep the secret one private.")),
+        h("div", { class: "f" }, h("label", { class: "l" }, "Print events at"), when, h("div", { class: "help" }, "On the day of the event. More options (the day before, several calendars) are on the Calendar tab.")),
+        h("div", { class: "row" }, h("button", { class: "btn", onclick: async () => {
+          if (!cal.url) return toast("Paste the iCal address first.", true);
+          res.textContent = "Checking…"; res.style.color = ""; try { const r = await api("/api/test-calendar", { method: "POST", json: { url: cal.url } }); res.textContent = r.message + (r.events && r.events.length ? "  e.g. " + r.events.slice(0, 3).map(x => x.title).join(", ") : ""); res.style.color = r.ok ? "var(--ok)" : "var(--bad)"; } catch (err) { res.textContent = err.message; res.style.color = "var(--bad)"; }
+        } }, "Test the address")), res),
+        { next: async () => { try { await persist(); } catch (err) { return toast(err.message || String(err), true); } advance(); }, skip: "I'll do this later" });
+    },
+    finish() {
+      const chosen = cat.filter(f => sel[f.id]);
+      const todo = chosen.filter(f => FEATURE_NEXT[f.id] && !FEATURE_NEXT[f.id].startsWith("Nothing to set up"));
+      const ready = chosen.filter(f => FEATURE_NEXT[f.id] && FEATURE_NEXT[f.id].startsWith("Nothing to set up"));
+      const missing = [];
+      if (sel.email && !(CFG.email.username && (CFG.email.password_set || CFG.email.password))) missing.push(["email", "Finish the email connection on the Email tab (the printer's Gmail address and app password)."]);
+      if (sel.calendar && !CFG.calendars.some(c => c.url)) missing.push(["calendar", "Add your calendar's iCal address on the Calendar tab."]);
+      frame(h("div", {}, h("h2", {}, "You're all set 🎉"),
+        h("p", {}, "Your menu now has the features you chose. You can add or hide features any time on the ", h("strong", {}, "Settings"), " tab."),
+        h("p", { class: "small muted" }, "Top menu: Dashboard, Print, Templates, Printer, Backup, Settings, Account" + (chosen.length ? ", " + chosen.map(f => f.title).join(", ") : "") + "."),
+        missing.length || todo.length ? h("div", { style: "margin-top:12px" }, h("h3", {}, "Still to do"),
+          ...missing.map(([t, m]) => h("div", { class: "item row", style: "margin-bottom:6px" }, h("span", { style: "flex:1" }, m), h("button", { class: "btn small", onclick: () => finish(t) }, "Open"))),
+          ...todo.map(f => h("div", { class: "item row", style: "margin-bottom:6px" }, h("span", { style: "flex:1" }, h("strong", {}, f.title + ": "), FEATURE_NEXT[f.id]),
+            FEATURE_TAB[f.id] ? h("button", { class: "btn small", onclick: () => finish(FEATURE_TAB[f.id]) }, "Open") : null))) : null,
+        ready.length ? h("p", { class: "small", style: "margin-top:12px" }, h("strong", {}, "Ready to use: "), ready.map(f => f.title + " (" + FEATURE_NEXT[f.id].replace("Nothing to set up: ", "") + ")").join("  ·  ")) : null,
+        h("div", { class: "small muted", style: "margin-top:12px" }, "Tip: on the Backup tab, download a copy of your settings and switch on the emailed copy, so a failed SD card never costs you your setup.")),
+        { next: () => finish(), nextLabel: "Go to the dashboard", skip: null });
+    },
+  };
+  function draw() { pages[step](); }
+  draw();
 }
 
 

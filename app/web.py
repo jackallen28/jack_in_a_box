@@ -18,7 +18,7 @@ from flask import Flask, Response, jsonify, request, send_file, send_from_direct
 from PIL import Image, ImageOps
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from . import aifeedback, backup as backup_mod, birthdays as birthdays_mod, icons as icon_lib, llm, pinkpanther, plugins, schema, sheet as sheet_mod, watchlist
+from . import aifeedback, features as features_mod, backup as backup_mod, birthdays as birthdays_mod, icons as icon_lib, llm, pinkpanther, plugins, schema, sheet as sheet_mod, watchlist
 from .config import APP_DIR, DATA_DIR, ROOT, KIND_DEFAULTS, ConfigStore, default_template, merge
 from .mailbox import MailPoller
 from .mailparse import Incoming, _load_image, parse
@@ -200,6 +200,7 @@ def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button, 
                                 "enabled": bool(f.get("enabled", True))})
         new["friends"] = friends
         new["icons"] = clean_icons(new.get("icons"))
+        new["features"] = old.get("features", {})                        # chosen in the setup guide / Settings only
         new.setdefault("birthdays", {})["people"] = old["birthdays"].get("people", [])        # the list is edited only through its own endpoints
         new["birthdays"]["print_time"] = f"{birthdays_mod.parse_hhmm(new['birthdays'].get('print_time', '07:00')):%H:%M}"
         b = new.setdefault("backup", {})
@@ -650,7 +651,7 @@ def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button, 
     def api_authorised() -> bool:
         ic = cfg.data["integrations"]
         tok = (request.headers.get("Authorization", "").removeprefix("Bearer ").strip() or request.headers.get("X-Token", "").strip())
-        return bool(ic.get("api_enabled") and ic.get("api_token") and hmac.compare_digest(tok, ic["api_token"]))
+        return bool(ic.get("api_enabled") and features_mod.on(cfg.data, "shortcuts") and ic.get("api_token") and hmac.compare_digest(tok, ic["api_token"]))
 
     @app.post("/api/print")
     def api_print():
@@ -759,6 +760,29 @@ def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button, 
                 c.source = "web"
                 svc.submit(c, 1)
         return jsonify(cards=out, printed=bool(b.get("print") and cards), **_pp_state())
+
+    # ------------------------------------------------------------------ Features (the setup guide and the Settings tab)
+    def _features_state():
+        c = cfg.data
+        return {"catalog": features_mod.public(), "features": c.get("features", {}), "core": features_mod.CORE_TABS, "setup_complete": bool(c.get("setup_complete")),
+                "tabs": features_mod.visible_tabs(c)}
+
+    @app.get("/api/features")
+    def features_get():
+        return jsonify(_features_state())
+
+    @app.put("/api/features")
+    def features_put():
+        """Choose the features.  ``complete`` also marks the setup guide as finished (after that only the chosen features run and get a tab)."""
+        b = request.json or {}
+        d = cfg.data
+        if "features" in b:
+            d["features"] = features_mod.clean(b["features"])
+        if b.get("complete"):
+            d["setup_complete"] = True
+        cfg.replace(d)
+        apply_runtime()
+        return jsonify(_features_state())
 
     # ------------------------------------------------------------------ Birthdays
     def _bd_state():

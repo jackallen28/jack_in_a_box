@@ -8,6 +8,7 @@ import threading
 import time
 from datetime import datetime
 
+from . import features
 from .config import ConfigStore
 from .mailparse import parse
 from .pipeline import build_cards, classify_sender, message_card
@@ -30,7 +31,7 @@ class MailPoller(threading.Thread):
         while not self.svc.stop.is_set():
             e = self.cfg.data["email"]
             wait = max(3, int(e.get("poll_seconds", 5)))
-            if e.get("enabled") and e.get("username") and e.get("password"):
+            if e.get("enabled") and e.get("username") and e.get("password") and features.on(self.cfg.data, "email"):
                 try:
                     self.poll_once(keep=True)                    # one connection, kept open: a check is one quick round trip, not a new login
                     self.status.update(state="ok", error="")

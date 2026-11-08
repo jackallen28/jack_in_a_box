@@ -23,7 +23,7 @@ import urllib.request
 from datetime import date, datetime, time as dtime, timedelta
 from zoneinfo import ZoneInfo
 
-from . import icons as icon_lib
+from . import features, icons as icon_lib
 from .config import ConfigStore
 from .mailparse import Incoming, _load_image
 from .dates import extract_deadline
@@ -253,7 +253,7 @@ class SheetPoller(threading.Thread):
     def run(self) -> None:
         while not self.svc.stop.is_set():
             sc = self.cfg.data["sheet"]
-            if sc.get("enabled") and sc.get("url") and sc.get("token"):
+            if sc.get("enabled") and sc.get("url") and sc.get("token") and features.on(self.cfg.data, "form"):
                 try:
                     if self.kick.is_set() or time.time() - self._last_poll >= max(15, int(sc.get("poll_seconds", 60))):
                         self._last_poll = time.time()

@@ -29,7 +29,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from PIL import Image, ImageOps
 
-from . import ipp
+from . import features, ipp
 from .config import ConfigStore
 from .rasterfmt import RasterError, read_pwg, read_urf
 from .render import _dither, mm, pt, text_block
@@ -82,6 +82,7 @@ class Settings:
         s.dither = s.dither if s.dither in ("auto", "text", "photo") else "auto"
         s.max_pages, s.max_copies = max(1, s.max_pages), max(1, s.max_copies)
         s.name = re.sub(r"\s+", " ", s.name).strip()[:60] or "Jack in a Box"
+        s.enabled = s.enabled and features.on(cfg, "airprint")        # not chosen in the setup guide: never advertised
         s.width_mm = float(cfg.get("templates", {}).get("reminder", {}).get("width_mm", 72))
         s.width_dots = int(cfg.get("printer", {}).get("width_dots", 576))
         return s

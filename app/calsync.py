@@ -26,7 +26,7 @@ from datetime import date, datetime, time, timedelta
 from .config import ConfigStore
 from .models import Card, Section
 from .pipeline import local_now, local_tz
-from . import icons as icon_lib, plugins, rules
+from . import features, icons as icon_lib, plugins, rules
 from .service import Service
 
 log = logging.getLogger("calendar")
@@ -166,6 +166,8 @@ class CalendarSync(threading.Thread):
         c = self.cfg.data
         tz, now = local_tz(c), local_now(c)
         self.last_sync = _t.time()
+        if not features.on(c, "calendar"):
+            return
         window_end = now + timedelta(days=int(c["calendar"].get("lookahead_days", 14)))
         errors = []
         total = 0

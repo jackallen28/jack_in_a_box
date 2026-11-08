@@ -21,7 +21,7 @@ import threading
 import uuid
 from datetime import date, datetime, time, timedelta
 
-from . import icons as icon_lib
+from . import features, icons as icon_lib
 from .dates import MONTH_MAP
 from .models import Card, Section
 
@@ -215,7 +215,7 @@ def card_text(card: Card, written_only: bool = False) -> str:
 def restyle(card: Card, cfg: dict) -> Card:
     """An ordinary reminder or calendar event that is about a birthday gets the BIRTHDAY template and symbol.  Nothing you wrote is removed."""
     b = cfg.get("birthdays", {})
-    if not b.get("enabled", True) or not b.get("recognise", True):
+    if not b.get("enabled", True) or not b.get("recognise", True) or not features.on(cfg, "birthdays"):
         return card
     if card.kind not in ("reminder", "calendar") or (card.template and card.template not in ("reminder", "calendar")):
         return card                                                      # friends' messages, email summaries, your own chosen templates: left alone
@@ -237,7 +237,7 @@ def learn(card_or_text, cfgstore) -> dict | None:
     """With "learn" on: a birthday in a reminder that comes with a date is added to your list (once).  Returns the person added, or None."""
     c = cfgstore.data
     b = c.get("birthdays", {})
-    if not (b.get("enabled", True) and b.get("learn", False)):
+    if not (b.get("enabled", True) and b.get("learn", False) and features.on(c, "birthdays")):
         return None
     if isinstance(card_or_text, str):
         text = card_or_text
@@ -296,7 +296,7 @@ class BirthdayService(threading.Thread):
         b = c["birthdays"]
         now = now or local_now(c)
         self.status["last_check"] = now.strftime("%d %b %H:%M:%S")
-        if not b.get("enabled", True) or not b.get("people"):
+        if not b.get("enabled", True) or not b.get("people") or not features.on(c, "birthdays"):
             return 0
         at = datetime.combine(now.date(), parse_hhmm(b.get("print_time", "07:00")), tzinfo=now.tzinfo)
         if now < at or (not b.get("catch_up", True) and now > at + timedelta(minutes=10)):

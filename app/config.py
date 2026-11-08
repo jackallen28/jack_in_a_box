@@ -14,6 +14,8 @@ import tempfile
 import threading
 from pathlib import Path
 
+from .features import FEATURE_IDS
+
 APP_DIR = Path(__file__).resolve().parent
 ROOT = APP_DIR.parent
 DATA_DIR = Path(os.environ.get("JACK_IN_A_BOX_DATA", ROOT / "data"))
@@ -154,6 +156,8 @@ def default_template(kind: str = "reminder") -> dict:
 
 DEFAULTS: dict = {
     "setup_complete": False,
+    # What this box is set up to do (app/features.py).  The first-run guide fills it in; Settings changes it later.
+    "features": {},
     "web": {"port": 8080, "password_hash": "", "secret_key": ""},
     "general": {
         "timezone": "",  # blank = the Pi's own timezone (set with raspi-config)
@@ -374,7 +378,13 @@ def merge(defaults, saved):
 
 
 def normalise(cfg: dict) -> dict:
+    legacy = "features" not in cfg                 # a config from before the setup guide (or a raw config.json rescued from an old card)
     cfg = merge(DEFAULTS, cfg)
+    if legacy and (cfg.get("setup_complete") or cfg.get("web", {}).get("password_hash")):
+        cfg["features"] = {fid: True for fid in FEATURE_IDS}      # it was already in use: nothing that worked is hidden or switched off
+        cfg["setup_complete"] = True
+    else:
+        cfg["features"] = {fid: bool((cfg.get("features") or {}).get(fid, False)) for fid in FEATURE_IDS}
     # Each template is merged against the defaults for its own kind so new
     # template options show up on old templates.
     tpls = {}

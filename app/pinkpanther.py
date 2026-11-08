@@ -32,7 +32,7 @@ from functools import lru_cache
 from html.parser import HTMLParser
 from pathlib import Path
 
-from . import fields
+from . import features, fields
 from . import icons as icon_lib
 from .config import APP_DIR, DATA_DIR
 from .models import Card, Section
@@ -686,7 +686,7 @@ def build(inc, cfg: dict, now: datetime, path: Path | None = None, fetch=None):
     The subject ("Pink Panther") says what it's about; the body, however long, is read for the episodes in it.  An episode is only
     stated as fact when the match is confident; a name that isn't in the list is printed as you wrote it."""
     pp = cfg.get("pinkpanther", {})
-    if not pp.get("enabled", True):
+    if not pp.get("enabled", True) or not features.on(cfg, "pinkpanther"):
         return [], inc
     subj, sym = icon_lib.extract_tags(inc.subject or "", cfg)
     body0, bsym = icon_lib.extract_tags(inc.body or "", cfg)

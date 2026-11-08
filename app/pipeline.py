@@ -12,7 +12,7 @@ from . import icons as icon_lib, llm, plugins, rules
 from .dates import fmt_when
 from .mailparse import Incoming
 from .models import Card, Section
-from . import aifeedback, autosymbols, emailclean, pinkpanther, watchlist
+from . import aifeedback, autosymbols, emailclean, features, pinkpanther, watchlist
 from .focus import detect_image_mode, find_focus, parse_focus
 from .summarise import bullets as extractive_bullets
 from .summarise import finish, overview_and_actions, prepare_thread
@@ -48,7 +48,7 @@ def classify_sender(addr: str, cfg: dict) -> tuple[str | None, dict | None]:
     if sender_allowed(addr, cfg):
         return "admin", None
     a = (addr or "").strip().lower()
-    for f in cfg.get("friends", []):
+    for f in (cfg.get("friends", []) if features.on(cfg, "messages") else []):
         if f.get("enabled", True) and str(f.get("email", "")).strip().lower() == a and a:
             return "friend", f
     return None, None

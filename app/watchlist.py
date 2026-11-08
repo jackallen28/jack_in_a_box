@@ -23,7 +23,7 @@ import re
 from dataclasses import replace
 from datetime import datetime
 
-from . import fields
+from . import features, fields
 from . import icons as icon_lib
 from . import llm
 from .models import Card, Section
@@ -340,7 +340,7 @@ def build_records(cfg: dict, now: datetime, recs: list, icons: list[str]):
 def build(inc, cfg: dict, now: datetime):
     """([one WATCH LIST slip per title] or [], the rest of the message to print normally or None).  Same contract as pinkpanther.build."""
     wl = cfg.get("watchlist", {})
-    if not wl.get("enabled", True):
+    if not wl.get("enabled", True) or not features.on(cfg, "watchlist"):
         return [], inc
     subj, sym = icon_lib.extract_tags(inc.subject or "", cfg)
     body0, bsym = icon_lib.extract_tags(inc.body or "", cfg)
