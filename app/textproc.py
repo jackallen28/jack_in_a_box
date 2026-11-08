@@ -116,6 +116,7 @@ class Item:
     icons: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)  # what was changed, for the log
     index: int = 0
+    written: str = ""                               # the words as typed, before dates were taken out of them
 
 
 # --------------------------------------------------------------------------
@@ -510,6 +511,7 @@ def build_items(text: str, ref: datetime, cfg: dict, *, split: bool | None = Non
     items: list[Item] = []
     for i, b in enumerate(blocks):
         raw = b["text"]
+        written = raw
         notes: list[str] = list(spell_notes) if not items else []
         deadline = None
         # Look for the deadline line-by-line so multi-line reminders work too.
@@ -526,7 +528,7 @@ def build_items(text: str, ref: datetime, cfg: dict, *, split: bool | None = Non
         if not fixed and not checklist and deadline is None:
             continue
         items.append(Item(text=fixed or "(see deadline)", deadline=deadline, priority=priority,
-                          checklist=checklist, notes=notes, index=i, icons=_dedupe(lead_ids + b.get("icons", []))))
+                          checklist=checklist, notes=notes, index=i, written=written, icons=_dedupe(lead_ids + b.get("icons", []))))
     return items
 
 

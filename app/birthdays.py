@@ -201,9 +201,12 @@ def person_card(p: dict, cfg: dict, now: datetime) -> Card:
 
 
 # ---------------------------------------------------------------------------- recognising birthday reminders
-def card_text(card: Card) -> str:
+def card_text(card: Card, written_only: bool = False) -> str:
+    """The card's words.  ``written_only`` leaves out the lines the app worked out itself (the DUE / WHEN date), so only what you typed is read."""
     parts = [card.heading or ""]
     for s in card.sections:
+        if written_only and s.key in ("deadline", "when"):
+            continue
         parts.append(s.text or "")
         parts.extend(s.items or [])
     return "\n".join(x for x in parts if x)
@@ -236,7 +239,10 @@ def learn(card_or_text, cfgstore) -> dict | None:
     b = c.get("birthdays", {})
     if not (b.get("enabled", True) and b.get("learn", False)):
         return None
-    text = card_or_text if isinstance(card_or_text, str) else card_text(card_or_text)
+    if isinstance(card_or_text, str):
+        text = card_or_text
+    else:                                                                # what was typed (the date may have been moved out of it into DUE), not what the app worked out
+        text = f"{card_or_text.heading}\n{card_or_text.vars['written']}" if card_or_text.vars.get("written") else card_text(card_or_text, written_only=True)
     if not BIRTHDAY.search(text):
         return None
     name = extract_name(text)

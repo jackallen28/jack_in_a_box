@@ -245,7 +245,7 @@ def _reminder(item, heading: str, now: datetime, cfg: dict, images, icon_ids=())
             secs.append(Section("deadline", text=fmt_when(item.deadline.when, item.deadline.has_time, now,
                                                           cfg["general"].get("time_format", "12h")), strong=True))
     return Card(kind="reminder", heading=heading, sections=secs, images=list(images), priority=priority,
-                icons=ids, source="email", created=now, notes=notes)
+                icons=ids, source="email", created=now, notes=notes, vars={"written": item.written} if item is not None and item.written else {})
 
 
 def plain_card(inc: Incoming, cfg: dict, now: datetime, *, kind: str = "reminder", template: str = "",

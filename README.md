@@ -568,6 +568,8 @@ file.
 * **Copies on the Pi:** the last 7 (changeable) are kept in `data/backups/` whenever something changed, and you can restore any of them with one click. That protects against a bad edit, **not** a dead SD card.
 * **Emailed copy (off by default):** *Email me a copy of my settings* sends the file from the printer's own mailbox to your first admin address (or another you type) whenever something has changed, at most
   every 7 days. It includes passwords unless you untick that, so it should go to an inbox only you can read. *Email me a copy now* tries it straight away and says plainly what is wrong if it can't.
+* **Rescuing a card that died before you had a backup:** if the old card still reads on a computer, copy `jack_in_a_box/data/config.json` off it and choose that file under *Restore* on the new Pi: it is
+  accepted just like a backup file.
 * Not backed up: the print history and the saved pictures (they are only the past), and the Pi itself (Wi-Fi, the install): those take a few minutes to redo.
 
 ## Power, cooling and the email mailbox

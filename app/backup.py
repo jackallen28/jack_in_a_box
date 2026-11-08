@@ -13,7 +13,7 @@ WHERE COPIES GO
   * By email (optional): a copy emailed to you from the printer's own mailbox when something has changed.
 
 RESTORING
-  Upload the file on the Backup tab of a fresh install.  The Pi first saves what it had (data/backups/before-restore-*.json), then
+  Upload the file on the Backup tab of a fresh install.  (The raw data/config.json copied off a dead SD card works too.)  The Pi first saves what it had (data/backups/before-restore-*.json), then
   applies the backup.  Its web port is never changed by a restore (so you can't lock yourself out).
 """
 from __future__ import annotations
@@ -84,6 +84,8 @@ def config_hash(config: dict) -> str:
 
 def validate(payload) -> dict:
     """The ``config`` inside an uploaded backup, or BackupError."""
+    if isinstance(payload, dict) and "format" not in payload and sum(isinstance(payload.get(k), dict) for k in ("email", "printer", "templates", "general", "web", "calendar")) >= 3:
+        return payload                                                    # the raw data/config.json rescued from an old SD card
     if not isinstance(payload, dict) or payload.get("format") != FORMAT:
         raise BackupError("That isn't a Jack in a Box backup file (it should be the .json file from the Backup tab).")
     if int(payload.get("version", 0) or 0) > VERSION:

@@ -68,6 +68,16 @@ def test_only_real_backups_are_accepted():
     assert bk.validate({"format": bk.FORMAT, "version": 1, "config": {"email": {}}}) == {"email": {}}
 
 
+def test_the_raw_config_file_rescued_from_a_dead_card_is_accepted(store, tmp_path):
+    raw = json.loads((tmp_path / "old" / "c.json").read_text())                                     # what data/config.json looks like
+    other = ConfigStore(tmp_path / "rescued" / "c.json")
+    res = bk.restore(other, raw, tmp_path / "rescued" / "backups")
+    assert other.data["email"]["password"] == "app-pass-123" and other.data["friends"][0]["name"] == "Sarah" and res["login_changed"] is True
+    for bad in ({"email": {}}, {"hello": 1}, {"format": "other", "email": {}, "printer": {}, "templates": {}}):
+        with pytest.raises(bk.BackupError):
+            bk.validate(bad)
+
+
 # ----------------------------------------------------------------------------- restoring onto a fresh Pi
 def test_a_complete_backup_restores_everything_on_a_new_sd_card(store, tmp_path):
     doc = bk.make_backup(store.data, True, NOW)

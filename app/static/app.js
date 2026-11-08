@@ -1116,7 +1116,7 @@ function backupPage(main) {
     h("label", { class: "row small" }, pw, "Include passwords (the printer's mailbox app password, Google Form token, web login). Needed for a complete restore; keep the file private."),
     h("div", { class: "row", style: "margin-top:8px" }, h("button", { class: "btn primary", onclick: () => { location.href = "/api/backup?passwords=" + (pw.checked ? 1 : 0); } }, "Download backup"))));
   main.append(h("div", { class: "card" }, h("h3", {}, "Restore from a backup file"),
-    h("div", { class: "small muted" }, "Choose a file you downloaded or received by email. What the Pi has now is saved first, and the web port is never changed."), pick,
+    h("div", { class: "small muted" }, "Choose a file you downloaded or received by email (or the old card's jack_in_a_box/data/config.json). What the Pi has now is saved first, and the web port is never changed."), pick,
     h("div", { class: "row", style: "margin-top:8px" }, h("button", { class: "btn", onclick: async () => {
       const f = pick.files[0]; if (!f) return toast("Choose the backup file first.", true);
       let doc; try { doc = JSON.parse(await f.text()); } catch (e) { return toast("That file isn't a backup (it can't be read).", true); }

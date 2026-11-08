@@ -241,6 +241,8 @@ def test_learning_a_birthday_from_a_reminder_only_when_asked_and_only_once(env):
         svc.submit(build_cards(reminder("", "Sarah's birthday is 14 March 1985"), cfg.data)[0][0])
     svc.submit(build_cards(reminder("", "buy a birthday card"), cfg.data)[0][0])                         # no name, no date
     svc.submit(build_cards(reminder("", "Tom's birthday on Friday"), cfg.data)[0][0])                   # no date
+    svc.submit(build_cards(reminder("", "Mum's birthday next Tuesday"), cfg.data)[0][0])              # the app's own "Tue 10 Nov" is not a birthday date
+    svc.submit(build_cards(reminder("", "Dad's birthday tomorrow"), cfg.data)[0][0])
     (p,) = cfg.data["birthdays"]["people"]
     assert (p["name"], p["day"], p["month"], p["year"]) == ("Sarah", 14, 3, 1985) and p["note"] == "added from an email"
 
