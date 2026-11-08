@@ -252,3 +252,102 @@ def test_restoring_a_backup_from_the_guide_skips_the_rest(client):
     assert r["ok"] and cfg.data["setup_complete"] is True and cfg.data["features"]["form"] is True
     st = c.get("/api/features").get_json()
     assert "form" in st["tabs"] and "airprint" not in st["tabs"]
+
+
+# ----------------------------------------------------------------------------- automatic reboot every 48 hours at 3 am
+import json as _json  # noqa: E402
+import os  # noqa: E402
+import sqlite3  # noqa: E402
+import subprocess  # noqa: E402
+
+SCRIPT = Path(__file__).resolve().parent.parent / "deploy" / "auto-reboot.sh"
+
+
+def run_reboot(tmp_path, *, hour="03", uptime_h=48.0, config=None, pending=0, dry=False, wait="0"):
+    """Run deploy/auto-reboot.sh against a fake app folder; returns (rebooted?, output)."""
+    (tmp_path / "data").mkdir(exist_ok=True)
+    if config is not None:
+        (tmp_path / "data" / "config.json").write_text(_json.dumps(config))
+    db = sqlite3.connect(tmp_path / "data" / "reminders.db")
+    db.execute("CREATE TABLE IF NOT EXISTS jobs (id INTEGER PRIMARY KEY, status TEXT)")
+    db.execute("DELETE FROM jobs")
+    db.executemany("INSERT INTO jobs(status) VALUES ('pending')", [()] * pending)
+    db.commit()
+    db.close()
+    up = tmp_path / "uptime"
+    up.write_text(f"{uptime_h * 3600:.2f} 0.00\n")
+    marker = tmp_path / "rebooted"
+    marker.unlink(missing_ok=True)                                                                # each run starts with "not rebooted"
+    env = dict(os.environ, JACK_NOW_HOUR=hour, JACK_UPTIME_FILE=str(up), JACK_REBOOT_CMD=f"touch {marker}", JACK_WAIT_SECONDS=wait, JACK_SLEEP="1")
+    r = subprocess.run(["bash", str(SCRIPT), str(tmp_path)] + (["--dry-run"] if dry else []), capture_output=True, text=True, env=env, timeout=30)
+    assert r.returncode == 0, r.stderr
+    return marker.exists(), r.stdout
+
+
+def test_it_reboots_at_3am_once_the_pi_has_been_up_about_48_hours(tmp_path):
+    assert run_reboot(tmp_path, hour="03", uptime_h=47.9)[0] is True                              # a 3am timer fire 2 days after the last reboot (a little under 48 h)
+    assert run_reboot(tmp_path, hour="03", uptime_h=24.0)[0] is False                             # the night after: not yet
+    assert run_reboot(tmp_path, hour="03", uptime_h=15.0)[0] is False                             # you rebooted it yourself yesterday afternoon
+    assert run_reboot(tmp_path, hour="03", uptime_h=500.0)[0] is True                             # been up for weeks: reboot now
+
+
+def test_it_only_acts_in_the_chosen_hour(tmp_path):
+    for hour in ("00", "02", "04", "15", "23"):
+        assert run_reboot(tmp_path, hour=hour, uptime_h=100.0)[0] is False
+    assert run_reboot(tmp_path, hour="03", uptime_h=100.0)[0] is True
+    cfg = {"maintenance": {"reboot_hour": 5}}
+    assert run_reboot(tmp_path, hour="03", uptime_h=100.0, config=cfg)[0] is False
+    assert run_reboot(tmp_path, hour="05", uptime_h=100.0, config=cfg)[0] is True
+
+
+def test_the_number_of_days_and_the_off_switch_are_followed(tmp_path):
+    three = {"maintenance": {"reboot_every_days": 3}}
+    assert run_reboot(tmp_path, uptime_h=48.0, config=three)[0] is False and run_reboot(tmp_path, uptime_h=70.5, config=three)[0] is True
+    off = {"maintenance": {"reboot_enabled": False}}
+    rebooted, out = run_reboot(tmp_path, uptime_h=500.0, config=off)
+    assert rebooted is False and "switched off" in out
+    for junk in ({}, {"maintenance": {"reboot_every_days": "x", "reboot_hour": "y"}}):             # a missing or damaged setting means the defaults: 2 days, 3 am
+        assert run_reboot(tmp_path, uptime_h=48.0, config=junk)[0] is True
+
+
+def test_it_waits_for_printing_to_finish_and_then_reboots_anyway_after_the_limit(tmp_path):
+    rebooted, out = run_reboot(tmp_path, uptime_h=48.0, pending=2, wait="2")
+    assert rebooted is True and "still printing" in out                                           # waited (2 s here, 30 minutes for real), then rebooted: the queue is kept
+    rebooted, out = run_reboot(tmp_path, uptime_h=48.0, pending=0, wait="2")
+    assert rebooted is True and "still printing" not in out
+
+
+def test_the_dry_run_says_what_it_would_do_and_changes_nothing(tmp_path):
+    rebooted, out = run_reboot(tmp_path, hour="11", uptime_h=60.0, dry=True)
+    assert rebooted is False and "Would reboot now" in out
+    rebooted, out = run_reboot(tmp_path, hour="11", uptime_h=10.0, dry=True)
+    assert rebooted is False and "Not yet" in out
+
+
+def test_the_installer_sets_the_timer_up_and_the_unit_files_are_sound():
+    deploy = SCRIPT.parent
+    install = (deploy / "install.sh").read_text()
+    assert "jack-in-a-box-reboot.timer" in install and "enable --now jack-in-a-box-reboot.timer" in install and "auto-reboot.sh" in install
+    timer = (deploy / "jack-in-a-box-reboot.timer").read_text()
+    assert "OnCalendar=*-*-* *:00:00" in timer and "Persistent=false" in timer                       # hourly, and never "catches up" late after a boot
+    svc = (deploy / "jack-in-a-box-reboot.service").read_text()
+    assert "Type=oneshot" in svc and "@DIR@/deploy/auto-reboot.sh @DIR@" in svc and "User=" not in svc   # runs as root: no sudo rule needed
+    assert os.access(SCRIPT, os.X_OK)
+    subprocess.run(["bash", "-n", str(SCRIPT)], check=True)
+
+
+def test_settings_show_when_the_next_reboot_is_and_the_card_fields_exist(client):
+    from test_web import H, login
+    c, cfg, svc = client
+    assert c.get("/api/maintenance").status_code == 401
+    login(c)
+    m = c.get("/api/maintenance").get_json()
+    assert (m["enabled"], m["every_days"], m["hour"]) == (True, 2, 3) and m["next_at"].endswith("03:00") and "uptime_hours" in m
+    d = cfg.data
+    d["maintenance"]["reboot_enabled"] = False
+    cfg.replace(d)
+    assert c.get("/api/maintenance").get_json()["next_at"] == ""
+    schema = c.get("/api/schema").get_json()["sections"]["maintenance"]
+    assert {f["path"] for f in schema} == {"maintenance.reboot_enabled", "maintenance.reboot_every_days", "maintenance.reboot_hour"}
+    conf = c.get("/api/config").get_json()
+    assert conf["maintenance"] == {"reboot_enabled": False, "reboot_every_days": 2, "reboot_hour": 3}

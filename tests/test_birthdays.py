@@ -230,21 +230,143 @@ def test_recognition_can_be_switched_off(env):
     assert jobs(svc)[0]["kind"] == "reminder"
 
 
-def test_learning_a_birthday_from_a_reminder_only_when_asked_and_only_once(env):
+def people(cfg):
+    return [(p["name"], p["day"], p["month"], p["year"]) for p in cfg.data["birthdays"]["people"]]
+
+
+def send(env, body, subject=""):
     cfg, svc = env
-    svc.submit(build_cards(reminder("", "Sarah's birthday is 14 March"), cfg.data)[0][0])
-    assert cfg.data["birthdays"]["people"] == []                                                      # off by default
+    cards, _ = build_cards(reminder(subject, body), cfg.data)
+    svc.submit(cards[0])
+    return cards[0]
+
+
+def test_a_birthday_reminder_with_a_date_is_added_for_that_day_every_year(env):
+    cfg, svc = env
+    card = send(env, "wish tom a happy birthday on 10 november")
+    assert people(cfg) == [("Tom", 10, 11, 0)]
+    assert card.kind == "birthday" and card.heading == "Tom"
+    assert any("Added Tom to your birthday list: 10 November every year." in s.text for s in card.sections)         # the slip says so
+    send(env, "wish tom a happy birthday on 10 November")                                                              # again: not doubled
+    assert len(people(cfg)) == 1
+    send(env, "Sarah's birthday is 14 March 1985")
+    assert ("Sarah", 14, 3, 1985) in people(cfg)
+
+
+def test_with_no_date_it_uses_the_day_the_reminder_is_for(env):
+    cfg, svc = env
+    from app.pipeline import local_now
+    today = local_now(cfg.data)
+    send(env, "wish Ann a happy birthday")
+    assert people(cfg)[-1][:3] == ("Ann", today.day, today.month)
+    tomorrow = today + timedelta(days=1)
+    send(env, "wish Dad a happy birthday tomorrow")
+    assert people(cfg)[-1][:3] == ("Dad", tomorrow.day, tomorrow.month)
+
+
+def test_name_patterns_for_wishing_someone(env):
+    for text, name in (("wish Tom a happy birthday", "Tom"), ("say happy birthday to Mum", "Mum"), ("text Jo happy birthday", "Jo"), ("send Sam a very happy birthday", "Sam"), ("call Nan for her birthday?", "")):
+        assert bd.extract_name(text) == name
+
+
+def test_things_that_are_not_a_persons_birthday_are_not_added(env):
+    cfg, svc = env
+    send(env, "buy a birthday card")
+    send(env, "birthday cake ingredients")
+    assert people(cfg) == []
     d = cfg.data
-    d["birthdays"]["learn"] = True
+    d["birthdays"]["learn"] = False
     cfg.replace(d)
-    for _ in range(2):
-        svc.submit(build_cards(reminder("", "Sarah's birthday is 14 March 1985"), cfg.data)[0][0])
-    svc.submit(build_cards(reminder("", "buy a birthday card"), cfg.data)[0][0])                         # no name, no date
-    svc.submit(build_cards(reminder("", "Tom's birthday on Friday"), cfg.data)[0][0])                   # no date
-    svc.submit(build_cards(reminder("", "Mum's birthday next Tuesday"), cfg.data)[0][0])              # the app's own "Tue 10 Nov" is not a birthday date
-    svc.submit(build_cards(reminder("", "Dad's birthday tomorrow"), cfg.data)[0][0])
-    (p,) = cfg.data["birthdays"]["people"]
-    assert (p["name"], p["day"], p["month"], p["year"]) == ("Sarah", 14, 3, 1985) and p["note"] == "added from an email"
+    send(env, "wish Zed a happy birthday on 3 May")
+    assert people(cfg) == []                                                                                          # switched off: it prints but isn't kept
+
+
+def test_the_sample_print_from_the_birthdays_tab_does_not_add_anyone_twice(env):
+    cfg, svc = env
+    send(env, "wish Tom a happy birthday on 10 november")
+    p = cfg.data["birthdays"]["people"][0]
+    card = bd.person_card(p, cfg.data, at(7))
+    card.source = "web"
+    svc.submit(card)
+    assert len(cfg.data["birthdays"]["people"]) == 1
+
+
+def test_the_list_can_be_downloaded_as_a_calendar_file(env):
+    import icalendar
+    cfg, svc = env
+    add(cfg, name="Tom", day=10, month=11, year=1990, note="likes jazz")
+    add(cfg, name="Leap", day=29, month=2, year=0)
+    add(cfg, name="Off", day=1, month=1, enabled=False)
+    cal = icalendar.Calendar.from_ical(bd.to_ics(cfg.data, TODAY))
+    evs = [e for e in cal.walk("VEVENT")]
+    assert sorted(str(e["SUMMARY"]) for e in evs) == ["Leap's birthday", "Tom's birthday"]
+    tom = next(e for e in evs if "Tom" in str(e["SUMMARY"]))
+    assert tom.decoded("DTSTART") == date(1990, 11, 10) and tom["RRULE"]["FREQ"] == ["YEARLY"] and tom["RRULE"]["BYMONTHDAY"] == [10] and str(tom["DESCRIPTION"]) == "likes jazz"
+    assert str(tom["UID"]) == f"birthday-{cfg.data['birthdays']['people'][0]['id']}@jack-in-a-box"
+    leap = next(e for e in evs if "Leap" in str(e["SUMMARY"]))
+    assert leap["RRULE"]["BYMONTHDAY"] == [-1] and leap["RRULE"]["BYMONTH"] == [2]
+
+
+# ----------------------------------------------------------------------------- the AI checks it really is a birthday
+class FakeOllama:
+    def __init__(self, answer):
+        self.answer, self.sent = answer, []
+
+    def __call__(self, cfg, path, payload, timeout):
+        self.sent.append(payload)
+        return {"message": {"content": self.answer}}
+
+
+def ai_env(env, monkeypatch, answer):
+    from app import llm
+    cfg, svc = env
+    d = cfg.data
+    d["summary"]["backend"] = "ollama"
+    d["llm"]["url"] = "http://127.0.0.1:1"
+    d["llm"]["check_seconds"] = 5
+    cfg.replace(d)
+    fake = FakeOllama(answer)
+    monkeypatch.setattr(llm, "_post", fake)
+    return fake
+
+
+def test_when_the_ai_says_it_is_not_a_birthday_the_reminder_stays_plain_and_nothing_is_added(env, monkeypatch):
+    fake = ai_env(env, monkeypatch, "NO")
+    card = send(env, "wish tom a happy birthday on 10 november")
+    assert card.kind == "reminder" and people(env[0]) == [] and "AI: not a birthday" in card.notes
+    assert "specific person's birthday" in fake.sent[0]["messages"][0]["content"]
+
+
+def test_when_the_ai_agrees_it_is_used_and_it_can_supply_a_name_only_from_the_message(env, monkeypatch):
+    ai_env(env, monkeypatch, "YES | Tom | 10 November")
+    card = send(env, "wish tom a happy birthday on 10 november")
+    assert card.kind == "birthday" and people(env[0]) == [("Tom", 10, 11, 0)]
+    ai_env(env, monkeypatch, "YES | Madonna | ")                                                                       # a name that isn't in the note: ignored
+    card = send(env, "remember it's his birthday on 3 may")
+    assert card.kind == "birthday" and all(p[0] != "Madonna" for p in people(env[0]))
+
+
+def test_a_muddled_ai_answer_changes_nothing(env, monkeypatch):
+    ai_env(env, monkeypatch, "Hmm, hard to say!")
+    card = send(env, "wish tom a happy birthday on 10 november")
+    assert card.kind == "birthday" and people(env[0]) == [("Tom", 10, 11, 0)]
+
+
+def test_the_ai_is_not_asked_when_ai_mode_is_off_when_the_check_is_off_or_when_no_birthday_is_mentioned(env, monkeypatch):
+    cfg, svc = env
+    fake = ai_env(env, monkeypatch, "NO")
+    d = cfg.data
+    d["birthdays"]["ai_check"] = False
+    cfg.replace(d)
+    assert send(env, "wish tom a happy birthday on 10 november").kind == "birthday"
+    d = cfg.data
+    d["birthdays"]["ai_check"] = True
+    cfg.replace(d)
+    assert send(env, "buy milk").kind == "reminder" and fake.sent == []
+    d = cfg.data
+    d["summary"]["backend"] = "extractive"
+    cfg.replace(d)
+    assert send(env, "wish Ann a happy birthday").kind == "birthday" and fake.sent == []
 
 
 # ----------------------------------------------------------------------------- the web page
@@ -281,6 +403,8 @@ def test_the_birthdays_page_adds_edits_prints_and_removes(client):
     assert c.put("/api/birthdays/nope", json={"name": "x"}, headers=H).status_code == 404
     assert c.post("/api/birthdays-test", json={"id": pid}, headers=H).get_json()["ok"] is True and jobs(svc) == [{"kind": "birthday", "title": "Sarah J", "source": "web"}]
     assert c.post("/api/birthdays-test", json={"id": "nope"}, headers=H).status_code == 404
+    r = c.get("/api/birthdays.ics")
+    assert r.status_code == 200 and r.mimetype == "text/calendar" and "attachment" in r.headers["Content-Disposition"] and b"Sarah J's birthday" in r.data and b"FREQ=YEARLY" in r.data
     assert c.delete(f"/api/birthdays/{pid}", headers=H).get_json()["people"] == []
 
 

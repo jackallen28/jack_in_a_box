@@ -231,6 +231,15 @@ def reminder_cards(inc: Incoming, cfg: dict, now: datetime, split: bool | None =
     return [_reminder(i, heading, now, cfg, [], s_ids) for i in items[: int(ecfg.get("max_cards_per_email", 10))]]
 
 
+def _reminder_vars(item) -> dict:
+    v: dict = {}
+    if item is not None and item.written:
+        v["written"] = item.written                                       # the words as typed (dates not yet taken out)
+    if item is not None and item.deadline is not None:
+        v["due"] = item.deadline.when.isoformat()                         # the day it resolved to ("tomorrow", "Friday", "10 November")
+    return v
+
+
 def _reminder(item, heading: str, now: datetime, cfg: dict, images, icon_ids=()) -> Card:
     secs: list[Section] = []
     priority = False
@@ -245,7 +254,7 @@ def _reminder(item, heading: str, now: datetime, cfg: dict, images, icon_ids=())
             secs.append(Section("deadline", text=fmt_when(item.deadline.when, item.deadline.has_time, now,
                                                           cfg["general"].get("time_format", "12h")), strong=True))
     return Card(kind="reminder", heading=heading, sections=secs, images=list(images), priority=priority,
-                icons=ids, source="email", created=now, notes=notes, vars={"written": item.written} if item is not None and item.written else {})
+                icons=ids, source="email", created=now, notes=notes, vars=_reminder_vars(item))
 
 
 def plain_card(inc: Incoming, cfg: dict, now: datetime, *, kind: str = "reminder", template: str = "",

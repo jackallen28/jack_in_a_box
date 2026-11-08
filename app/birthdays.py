@@ -21,7 +21,7 @@ import threading
 import uuid
 from datetime import date, datetime, time, timedelta
 
-from . import features, icons as icon_lib
+from . import aicheck, features, icons as icon_lib
 from .dates import MONTH_MAP
 from .models import Card, Section
 
@@ -30,6 +30,7 @@ log = logging.getLogger("birthdays")
 BIRTHDAY = re.compile(r"\bbirth\s*days?\b|\bb-?days?\b|\bturn(?:s|ing)\s+\d{1,3}\b", re.I)
 _MONTH_RE = "|".join(sorted(MONTH_MAP, key=len, reverse=True))
 _NAME = r"[A-Za-z][\w'’\-]*"
+MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
 _STOP_NAME = {"my", "our", "the", "your", "his", "her", "their", "this", "that", "next", "a", "an", "on", "is", "it", "its", "for", "of", "to", "party", "day", "today", "tomorrow", "and",
               "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "birthday", "bday", "present", "gift", "card", "cake", "reminder", "remind", "me", "dont", "don't",
               "forget", "buy", "get", "wish", "happy", "with", "at", "in", "by", "from", "week", "weekend", "month", "year", "someone", "everyone", "friend", "mate", "colleague"}
@@ -55,7 +56,8 @@ def extract_name(text: str) -> str:
     pats = [
         rf"((?:{_NAME}\s+)?{_NAME})['’]s?\s+(?:\d{{1,3}}(?:st|nd|rd|th)\s+)?(?:birth\s*day|b-?day)",
         rf"(?:happy\s+)?(?:birth\s*day|b-?day)\s*(?:party\s+)?(?:for|of|:|-|–|—)\s*((?:{_NAME}\s+)?{_NAME})",
-        rf"happy\s+(?:birth\s*day|b-?day)\s+(?:to\s+)?((?:{_NAME}\s+)?{_NAME})",
+        rf"(?:wish|tell|text|call|message|send)\s+((?:{_NAME}\s+)?{_NAME})\s+(?:a\s+|an\s+)?(?:very\s+)?happy\s+(?:birth\s*day|b-?day)",
+        rf"(?:say\s+)?happy\s+(?:birth\s*day|b-?day)\s+(?:to\s+)?((?:{_NAME}\s+)?{_NAME})",
         rf"((?:{_NAME}\s+)?{_NAME})\s+(?:turns|is\s+turning|turning)\s+\d{{1,3}}",
         rf"((?:{_NAME}\s+)?{_NAME})\s+(?:birth\s*day|b-?day)\b",
     ]
@@ -222,22 +224,50 @@ def restyle(card: Card, cfg: dict) -> Card:
     text = card_text(card)
     if not BIRTHDAY.search(text):
         return card
+    verdict = ai_verdict(text, cfg) if aicheck.available(cfg, b.get("ai_check", True)) else None
+    if verdict is not None:
+        card.vars["ai_birthday"] = verdict
+        if not verdict["yes"]:                                           # the AI read it and it isn't a person's birthday ("buy birthday candles"): leave it as a plain reminder
+            card.notes.append("AI: not a birthday")
+            return card
     card.kind, card.template = "birthday", "birthday"
+    card.vars["recognised"] = True                                       # came from a reminder (not a slip the app made itself): only these are kept on the list
     card.vars.setdefault("date", (card.created or datetime.now()).strftime("%a %d %b"))        # the template's subtitle (reminders don't carry one)
     sym = symbol_id(cfg)
     if sym and sym not in card.icons:
         card.icons = [sym] + list(card.icons)
     if not card.heading:
-        card.heading = extract_name(text)
+        card.heading = extract_name(text) or (verdict or {}).get("name", "")
     card.notes.append("recognised as a birthday")
     return card
+
+
+AI_SYSTEM = ("You check short reminder notes. Decide whether the note is about a specific person's birthday (for example 'wish Tom a happy birthday' or \"Mum's birthday on Friday\"). "
+             "Reply with exactly one line and nothing else: NO if it is not about a specific person's birthday (for example 'buy birthday candles'); otherwise: YES | name | date. "
+             "name is the person whose birthday it is (never the person writing the note). date is the day and month only if the note states one, otherwise leave it empty. Use only what the note says.")
+
+
+def ai_verdict(text: str, cfg: dict) -> dict | None:
+    """What the local AI makes of the note: {"yes": bool, "name": str} (the name only if it really appears in the note), or None if it couldn't say in time."""
+    reply = aicheck.ask(AI_SYSTEM, f"Note: {text.strip()[:600]}", cfg)
+    line = aicheck.first_line(reply or "")
+    if not line:
+        return None
+    up = line.upper()
+    if up.startswith("NO"):
+        return {"yes": False, "name": ""}
+    if up.startswith("YES"):
+        parts = [x.strip() for x in line.split("|")]
+        name = _tidy_name(parts[1]) if len(parts) > 1 else ""
+        return {"yes": True, "name": name if name and aicheck.in_text(name, text) else ""}
+    return None
 
 
 def learn(card_or_text, cfgstore) -> dict | None:
     """With "learn" on: a birthday in a reminder that comes with a date is added to your list (once).  Returns the person added, or None."""
     c = cfgstore.data
     b = c.get("birthdays", {})
-    if not (b.get("enabled", True) and b.get("learn", False) and features.on(c, "birthdays")):
+    if not (b.get("enabled", True) and b.get("learn", True) and features.on(c, "birthdays")):
         return None
     if isinstance(card_or_text, str):
         text = card_or_text
@@ -245,11 +275,28 @@ def learn(card_or_text, cfgstore) -> dict | None:
         text = f"{card_or_text.heading}\n{card_or_text.vars['written']}" if card_or_text.vars.get("written") else card_text(card_or_text, written_only=True)
     if not BIRTHDAY.search(text):
         return None
-    name = extract_name(text)
-    found = find_date(text, c["general"].get("date_order", "dmy"))
-    if not name or not found:
+    if not isinstance(card_or_text, str) and not card_or_text.vars.get("recognised"):
         return None
-    day, month, year, _ = found
+    verdict = None if isinstance(card_or_text, str) else card_or_text.vars.get("ai_birthday")
+    if verdict is not None and not verdict["yes"]:
+        return None                                                      # the AI said this isn't a person's birthday
+    name = extract_name(text) or (verdict or {}).get("name", "")
+    found = find_date(text, c["general"].get("date_order", "dmy"))
+    if found:
+        day, month, year, _ = found                                      # "... on 10 November": that day, every year
+    else:                                                                # no date said: the day the reminder is for (tomorrow, Friday ...), else today
+        when = None
+        if not isinstance(card_or_text, str):
+            due = card_or_text.vars.get("due")
+            try:
+                when = datetime.fromisoformat(due) if due else (card_or_text.created or datetime.now())
+            except ValueError:
+                when = card_or_text.created or datetime.now()
+        if when is None:
+            return None
+        day, month, year = when.day, when.month, 0
+    if not name:
+        return None
     people = list(b.get("people", []))
     if any(p["name"].lower() == name.lower() and p["day"] == day and p["month"] == month for p in people) or len(people) >= 500:
         return None
@@ -261,6 +308,36 @@ def learn(card_or_text, cfgstore) -> dict | None:
     cfgstore.replace(d)
     log.info("Added %s (%d/%d) to the birthday list from a reminder", name, day, month)
     return p
+
+
+# ---------------------------------------------------------------------------- a calendar file of the list
+def to_ics(cfg: dict, today: date | None = None) -> bytes:
+    """Your birthday list as an .ics file (a yearly all-day event per person) to import into Google / Apple / Outlook Calendar.  Ids are stable, so importing it
+    again updates the same events instead of doubling them."""
+    from icalendar import Calendar, Event
+    today = today or date.today()
+    cal = Calendar()
+    cal.add("prodid", "-//Jack in a Box//Birthdays//EN")
+    cal.add("version", "2.0")
+    cal.add("x-wr-calname", "Birthdays (Jack in a Box)")
+    for p in cfg.get("birthdays", {}).get("people", []):
+        if not p.get("enabled", True):
+            continue
+        start_year = p["year"] if p.get("year") else today.year
+        try:
+            first = date(start_year, p["month"], p["day"])
+        except ValueError:                                               # 29 February in a year with no 29th
+            first = date(start_year, 2, 28)
+        ev = Event()
+        ev.add("uid", f"birthday-{p['id']}@jack-in-a-box")
+        ev.add("summary", f"{p['name']}'s birthday")
+        ev.add("dtstart", first)
+        ev.add("dtstamp", datetime(today.year, today.month, today.day))
+        ev.add("rrule", {"freq": "yearly", "bymonth": p["month"], "bymonthday": -1 if (p["month"] == 2 and p["day"] == 29) else p["day"]})
+        if p.get("note"):
+            ev.add("description", p["note"])
+        cal.add_component(ev)
+    return cal.to_ical()
 
 
 # ---------------------------------------------------------------------------- the 7am printer

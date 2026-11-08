@@ -56,10 +56,10 @@ fi
 echo "==> Installing the start-on-boot service"
 sed -e "s|@USER@|$RUN_USER|g" -e "s|@DIR@|$DIR|g" "$DIR/deploy/jack-in-a-box.service" | \
   sudo tee /etc/systemd/system/jack-in-a-box.service >/dev/null
-for unit in jack-in-a-box-update.service jack-in-a-box-update.timer; do
+for unit in jack-in-a-box-update.service jack-in-a-box-update.timer jack-in-a-box-reboot.service jack-in-a-box-reboot.timer; do
   sed -e "s|@USER@|$RUN_USER|g" -e "s|@DIR@|$DIR|g" "$DIR/deploy/$unit" | sudo tee "/etc/systemd/system/$unit" >/dev/null
 done
-chmod +x "$DIR/deploy/update.sh"
+chmod +x "$DIR/deploy/update.sh" "$DIR/deploy/auto-reboot.sh"
 
 # The app runs as YOU (not root). Its only extra powers are these exact commands (restart itself, run the updater,
 # and power the Pi off when you enable "idle power-off"):
@@ -79,6 +79,7 @@ sudo systemctl enable jack-in-a-box.service      # start at every boot
 sudo systemctl restart jack-in-a-box.service     # and start now
 if [[ "$AUTO_UPDATE" == "yes" ]]; then sudo systemctl enable --now jack-in-a-box-update.timer
 else sudo systemctl disable --now jack-in-a-box-update.timer >/dev/null 2>&1 || true; fi
+sudo systemctl enable --now jack-in-a-box-reboot.timer      # reboot every 2 days at 3 am (Settings tab: change or switch off)
 
 sleep 3
 if systemctl is-active --quiet jack-in-a-box.service; then STATE="running"; else STATE="NOT running - see: journalctl -u jack-in-a-box -n 50"; fi

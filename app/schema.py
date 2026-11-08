@@ -244,8 +244,14 @@ SECTIONS = {
         F("birthdays.print_time", "Print at (HH:MM)", "text", "On the day itself. Default 07:00."),
         F("birthdays.catch_up", "If the Pi was off then, print as soon as it is back that day", "bool"),
         F("birthdays.recognise", "Give birthday reminders the BIRTHDAY template", "bool", "A reminder (email, Google Form, Shortcut, web Print) or calendar event that talks about a birthday, like “Sarah's birthday on Friday”, prints with the BIRTHDAY look instead of the plain reminder."),
-        F("birthdays.learn", "Add birthdays that come with a date to my list", "bool", "“Sarah's birthday is 14 March” in a reminder adds Sarah to the list (once), so she comes round every year. Off by default: check the list now and then."),
+        F("birthdays.learn", "Keep birthday reminders on my birthday list", "bool", "“Wish Tom a happy birthday on 10 November” adds Tom to the list for 10 November, so he comes round every year (7 am). With no date it uses the day the reminder is for, else today. The slip says when it added one; fix or remove it on this tab."),
+        F("birthdays.ai_check", "Let the AI check it is really a birthday", "bool", "Only when AI mode is on. The AI reads the reminder first (“buy birthday candles” isn't a person's birthday). It has 20 seconds; if it is slower the slip just prints."),
         F("birthdays.symbol", "Symbol on the slip", "text", "A name or tag from the Symbols page. Default: birthday (the cake)."),
+    ],
+    "maintenance": [
+        F("maintenance.reboot_enabled", "Reboot the Pi automatically", "bool", "A fresh start now and then keeps a Pi that runs all the time healthy. It waits for anything that is printing, and everything waiting in the queue is kept."),
+        F("maintenance.reboot_every_days", "Every (days)", "number", "2 = every 48 hours.", min=1, max=30),
+        F("maintenance.reboot_hour", "At (hour, 0-23)", "number", "3 = 3 am, by the Pi's own clock (the timezone you chose when flashing the card).", min=0, max=23),
     ],
     "backup": [
         F("backup.local", "Keep the last few copies of my settings on the Pi", "bool", "Protects against a bad edit. It does NOT protect against a dead SD card: for that, download a copy or turn on the emailed copy."),
@@ -261,7 +267,8 @@ SECTIONS = {
         F("watchlist.ai", "Let the AI find the titles in a long email", "bool", "SLOW on a Raspberry Pi (a minute or more). Needs AI mode switched on (Text & sorting). Every title it picks must appear in your text, so it can't invent one."),
         F("watchlist.plot", "Print a short plot line from the email's description", "bool", "Emails written as “Movie Name: … Description: … Release Date: …” give the title, the release date or year and 2-3 sentences of plot. Director, cast, themes and other extras are never printed."),
         F("watchlist.plot_ai", "Let the AI condense a long description", "bool", "SLOW on a Raspberry Pi (a minute or more before the slip prints; leave off for instant prints). Needs AI mode switched on. 2-4 spoiler-free sentences, checked so it can't make things up; otherwise the opening sentences are used."),
-        F("watchlist.max_titles", "Most slips from one message", "number", "Normally an email names one movie or show. If it names several, each gets its own slip, up to this many.", min=1, max=20),
+        F("watchlist.max_titles", "Most slips from one message", "number", "An email names one movie or show, so this is 1. Raise it only if you send several in one email.", min=1, max=20),
+        F("watchlist.ai_check", "Let the AI check the title makes sense", "bool", "Only when AI mode is on. For messages the Pi has to read as free text, the AI checks the title it found is what the message is about (and can correct it, using only words in the message). It has 20 seconds; if it is slower the slip just prints."),
     ],
     "pinkpanther": [
         F("pinkpanther.enabled", "Recognise Pink Panther episodes in messages", "bool", "A message about a Pink Panther episode prints as a PINK PANTHER slip with the picture, the real title, season, date, episode number and a short plot overview."),

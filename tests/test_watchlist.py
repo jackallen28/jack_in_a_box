@@ -19,6 +19,9 @@ NOW = datetime(2026, 11, 4, 10, 0)
 CFG = normalise({})
 
 
+MANY = normalise({"watchlist": {"max_titles": 5}})
+
+
 def msg(subject="", body="", name="Jack"):
     return Incoming(subject=subject, body=body, sender_addr="me@x.com", sender_name=name)
 
@@ -68,14 +71,14 @@ def test_one_title_one_slip_with_only_the_details_the_message_gave():
 
 
 def test_if_an_email_names_several_each_gets_its_own_slip():
-    cards, rest = one("Watch list", "Dune (2021)\nSeverance season 2\nwatch The Bear on Disney+\nThe Godfather")
+    cards, rest = one("Watch list", "Dune (2021)\nSeverance season 2\nwatch The Bear on Disney+\nThe Godfather", MANY)
     assert [c.heading for c in cards] == ["Dune", "Severance", "The Bear", "The Godfather"] and rest is None
     assert all(c.kind == "watchlist" and c.icons == ["action"] for c in cards)
     assert cards[2].sections[0].text == "ON: Disney+"
 
 
 def test_your_symbol_tags_come_along_after_the_action_symbol():
-    cards, _ = one("[fun] Watch list", "Dune\nBarbie")
+    cards, _ = one("[fun] Watch list", "Dune\nBarbie", MANY)
     assert [c.icons for c in cards] == [["action", "fun"]] * 2
 
 
@@ -98,7 +101,7 @@ def test_titles_are_picked_out(subject, body, titles):
 
 
 def test_each_titles_year_and_service_stay_with_that_title():
-    cards, _ = one("Weekend", "watch The Bear on Disney+ and Dune (2021) on Netflix tonight")
+    cards, _ = one("Weekend", "watch The Bear on Disney+ and Dune (2021) on Netflix tonight", MANY)
     assert sorted(listed(cards)) == ["Dune (2021) - Netflix", "The Bear - Disney+"]
 
 
@@ -117,9 +120,9 @@ def test_a_clear_line_in_an_ordinary_message_is_taken_and_the_rest_stays_a_remin
 
 def test_a_long_chatty_email_is_read_without_the_greeting_and_sign_off():
     body = "Hi Jack,\n\nHope you're well! We should watch The Bear on Disney+ and also Severance season 2 sometime.\n\nThanks,\nSam"
-    cards, rest = one("Weekend", body, name="Sam")
+    cards, rest = one("Weekend", body, MANY, name="Sam")
     assert sorted(listed(cards)) == ["Severance S2 - TV show", "The Bear - Disney+"] and rest is None
-    cards, _ = one("Watch list", "Dune\nBarbie\n\nThanks,\nJack", name="Jack")
+    cards, _ = one("Watch list", "Dune\nBarbie\n\nThanks,\nJack", MANY, name="Jack")
     assert listed(cards) == ["Dune", "Barbie"]                                                      # "Jack" is the sign-off, not a film
 
 
@@ -127,7 +130,7 @@ def test_switching_it_off_and_the_title_limit():
     assert one("Watch list", "Dune", normalise({"watchlist": {"enabled": False}}))[0] == []
     cards, _ = one("Watch list", "A One\nB Two\nC Three", normalise({"watchlist": {"max_titles": 2}}))
     assert len(cards) == 2
-    assert len(one("Watch list", "A One\nB Two\nC Three\nD Four\nE Five\nF Six")[0]) == 5          # the default
+    assert len(one("Watch list", "A One\nB Two\nC Three\nD Four\nE Five\nF Six")[0]) == 1          # the default: one email, one slip
 
 
 # ----------------------------------------------------------------------------- Pink Panther keeps its own slip
@@ -166,7 +169,7 @@ class FakeOllama:
         return {"message": {"content": self.answer}}
 
 
-AI_CFG = normalise({"summary": {"backend": "ollama"}, "llm": {"url": "http://127.0.0.1:1"}, "watchlist": {"ai": True}})
+AI_CFG = normalise({"summary": {"backend": "ollama"}, "llm": {"url": "http://127.0.0.1:1"}, "watchlist": {"ai": True, "ai_check": False, "max_titles": 5}})
 CHATTY = "Hi Jack,\n\nThe kids have been on about the new Pixar one, and my brother says Heat holds up well. Also we finally saw oppenheimer last week.\n\nThanks,\nSam"
 
 
@@ -209,6 +212,7 @@ def test_the_web_page_can_test_and_print(tmp_path):
     cfg = ConfigStore(tmp_path / "c.json")
     d = cfg.data
     d["printer"]["backend"] = "dummy"
+    d["watchlist"]["max_titles"] = 5
     cfg.replace(d)
     svc = Service(cfg, tmp_path)
     c = create_app(cfg, svc, MailPoller(cfg, svc), CalendarSync(cfg, svc), ButtonController(cfg, svc)).test_client()
@@ -222,7 +226,7 @@ def test_the_web_page_can_test_and_print(tmp_path):
     assert p["printed"] is True and svc.db.one("SELECT kind, title FROM jobs") == {"kind": "watchlist", "title": "Dune"}
     assert c.post("/api/watchlist-test", json={"subject": "Shopping", "q": "milk"}, headers=H).get_json()["cards"] == []
     schema = c.get("/api/schema").get_json()["sections"]["watchlist"]
-    assert {f["path"] for f in schema} == {"watchlist.enabled", "watchlist.symbol", "watchlist.ai", "watchlist.plot", "watchlist.plot_ai", "watchlist.max_titles"}
+    assert {f["path"] for f in schema} == {"watchlist.enabled", "watchlist.symbol", "watchlist.ai", "watchlist.ai_check", "watchlist.plot", "watchlist.plot_ai", "watchlist.max_titles"}
 
 
 def test_the_full_trip_through_the_mailbox(tmp_path):
@@ -234,7 +238,102 @@ def test_the_full_trip_through_the_mailbox(tmp_path):
     d = cfg.data
     d["printer"]["backend"] = "dummy"
     d["email"]["allowed_senders"] = ["me@example.com"]
+    d["watchlist"]["max_titles"] = 5
     cfg.replace(d)
     svc = Service(cfg, tmp_path)
     ids = MailPoller(cfg, svc).handle(mk("Watch list", "Dune (2021)\nSeverance season 2\n\nThanks,\nJack"))
     assert len(ids) == 2 and [(r["kind"], r["title"]) for r in svc.db.all("SELECT kind, title FROM jobs")] == [("watchlist", "Dune"), ("watchlist", "Severance")]
+
+
+# ----------------------------------------------------------------------------- ONE slip per email
+def test_an_email_about_one_movie_makes_one_slip_even_with_stray_labels_and_names_in_it():
+    from test_labelled_emails import cards_for
+    body = ("Movie Name: Iron Man\nDescription: Tony Stark builds a suit.\nSeries: Marvel Cinematic Universe\nShow: no\nFilm: Iron Man (2008)\n"
+            "Lead Actor: Robert Downey Jr.\nRelease Date: May 2, 2008")
+    cards = cards_for(body)
+    assert [(c.kind, c.heading) for c in cards] == [("watchlist", "Iron Man")]
+    assert len(cards_for("Movie: Dune\nDescription: x\n\nMovie: Barbie\nDescription: y")) == 1                  # the default cap is one per email
+    assert len(cards_for("Movie: Dune\nDescription: x\n\nMovie: Barbie\nDescription: y", cfg=MANY)) == 2         # unless you raise it
+
+
+def test_the_same_email_arriving_twice_makes_one_slip(tmp_path):
+    from test_core import mk
+    from app.config import ConfigStore
+    from app.mailbox import MailPoller
+    from app.service import Service
+    cfg = ConfigStore(tmp_path / "c.json")
+    d = cfg.data
+    d["printer"]["backend"] = "dummy"
+    d["email"]["allowed_senders"] = ["me@example.com"]
+    cfg.replace(d)
+    svc = Service(cfg, tmp_path)
+    poller = MailPoller(cfg, svc)
+    first = poller.handle(mk("Watch list", "Dune (2021)", mid="<w1@x>"))
+    again = poller.handle(mk("Watch list", "Dune (2021)", mid="<w2@x>"))                              # the phone sent it twice (a different Message-ID)
+    assert len(first) == 1 and again == [] and len(svc.db.all("SELECT id FROM jobs")) == 1
+    assert len(poller.handle(mk("Watch list", "Barbie", mid="<w3@x>"))) == 1                          # a different title still prints
+
+
+# ----------------------------------------------------------------------------- the AI reads the message and checks the title
+REVIEW_CFG = normalise({"summary": {"backend": "ollama"}, "llm": {"url": "http://127.0.0.1:1", "check_seconds": 5}, "watchlist": {"ai_check": True}})
+
+
+def reviewed(answer, body="watch Dune (2021) on Netflix", subject="Reminder", cfg=REVIEW_CFG, monkeypatch=None):
+    monkeypatch.setattr(llm, "_post", FakeOllama(answer))
+    return one(subject, body, cfg)
+
+
+def test_the_ai_confirms_a_title_that_makes_sense(monkeypatch):
+    (c,), _ = reviewed("OK", monkeypatch=monkeypatch)
+    assert c.heading == "Dune" and "YEAR: 2021" in c.sections[0].text
+
+
+def test_the_ai_can_correct_the_title_but_only_with_words_from_the_message(monkeypatch):
+    (c,), _ = reviewed("FIX | Dune Part Two | movie | 2024", body="watch Dune Part Two (2024) on Netflix", monkeypatch=monkeypatch)
+    assert c.heading == "Dune Part Two" and "YEAR: 2024" in c.sections[0].text
+    (c,), _ = reviewed("FIX | Blade Runner | movie | 1982", monkeypatch=monkeypatch)                  # not in the message: ignored
+    assert c.heading == "Dune" and "YEAR: 2021" in c.sections[0].text
+
+
+def test_when_the_ai_says_it_isnt_a_movie_message_it_prints_as_an_ordinary_reminder(monkeypatch):
+    cards, rest = reviewed("NO", monkeypatch=monkeypatch)
+    assert cards == [] and rest.body == "watch Dune (2021) on Netflix"
+    cards, _ = build_cards(msg("Reminder", "watch Dune (2021) on Netflix"), REVIEW_CFG)
+    assert {c.kind for c in cards} == {"reminder"}                                                   # all the way through: it prints as a plain reminder
+
+
+def test_a_muddled_or_missing_answer_keeps_the_rules_reading(monkeypatch):
+    for answer in ("Sure! I think so.", "", "**OK**"):
+        (c,), _ = reviewed(answer, monkeypatch=monkeypatch)
+        assert c.heading == "Dune"
+    monkeypatch.setattr(llm, "_post", FakeOllama(OSError("refused")))
+    (c,), _ = one("Reminder", "watch Dune (2021) on Netflix", REVIEW_CFG)
+    assert c.heading == "Dune"
+
+
+def test_a_slow_ai_never_holds_the_slip_up(monkeypatch):
+    import time as _t
+    from app import aicheck
+
+    class Slow(FakeOllama):
+        def __call__(self, cfg, path, payload, timeout):
+            _t.sleep(1.5)
+            return {"message": {"content": "NO"}}
+
+    monkeypatch.setattr(llm, "_post", Slow("NO"))
+    quick = normalise({"summary": {"backend": "ollama"}, "llm": {"url": "http://127.0.0.1:1", "check_seconds": 0.2}, "watchlist": {"ai_check": True}})
+    t0 = _t.time()
+    (c,), _ = one("Reminder", "watch Dune (2021) on Netflix", quick)
+    assert _t.time() - t0 < 1.0 and c.heading == "Dune"                                              # printed without waiting for the AI
+    (c,), _ = one("Reminder", "watch Barbie (2023) on Netflix", quick)                                # still busy with the first: skipped, not queued behind it
+    assert c.heading == "Barbie"
+    _t.sleep(1.6)
+    assert not aicheck._busy.is_set()
+
+
+def test_the_ai_is_not_asked_when_ai_mode_is_off_or_the_check_is_off(monkeypatch):
+    fake = FakeOllama("NO")
+    monkeypatch.setattr(llm, "_post", fake)
+    (c,), _ = one("Reminder", "watch Dune (2021) on Netflix", CFG)
+    (c,), _ = one("Reminder", "watch Dune (2021) on Netflix", normalise({"summary": {"backend": "ollama"}, "watchlist": {"ai_check": False}}))
+    assert fake.sent == [] and c.heading == "Dune"

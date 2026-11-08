@@ -23,7 +23,7 @@ import re
 from dataclasses import replace
 from datetime import datetime
 
-from . import features, fields
+from . import aicheck, features, fields
 from . import icons as icon_lib
 from . import llm
 from .models import Card, Section
@@ -247,6 +247,36 @@ def ai_titles(text: str, cfg: dict) -> list[dict]:
     return out
 
 
+REVIEW_SYSTEM = ("You check notes someone sent to remember a movie or TV show to watch. Reply with exactly one line and nothing else. "
+                 "If the title we found is the movie or TV show the note is about: OK. If the note is about a different title, or the type or year is wrong: FIX | title | movie or tv | year "
+                 "(leave the year empty if the note doesn't give one). If the note is not about a movie or TV show at all: NO. Use only words that are in the note.")
+
+
+def ai_review(items: list[dict], text: str, cfg: dict) -> list[dict]:
+    """The local AI reads the message and checks the title the rules found.  OK keeps it; FIX corrects it (only with words really in the message); NO drops it
+    (the message then prints as an ordinary reminder).  If the AI can't say in time, or its answer isn't understood, the rules' reading stands."""
+    out = []
+    for it in items:
+        known = f"title = {it['title']}; type = {it['type'] or 'unknown'}; year = {it['year'] or 'unknown'}"
+        line = aicheck.first_line(aicheck.ask(REVIEW_SYSTEM, f"Note: {text.strip()[:600]}\nWe found: {known}", cfg) or "")
+        up = line.upper()
+        if up.startswith("NO"):
+            log.info("AI: %r is not a movie or show message", it["title"])
+            continue
+        if up.startswith("FIX"):
+            parts = [x.strip() for x in line.split("|")]
+            title = parts[1].strip("\"“”") if len(parts) > 1 else ""
+            if title and aicheck.in_text(title, text):
+                it = dict(it, title=title)
+                kind = (parts[2].lower() if len(parts) > 2 else "")
+                it["type"] = "tv" if kind.startswith("tv") else "movie" if kind.startswith(("mov", "film")) else it["type"]
+                year = parts[3] if len(parts) > 3 else ""
+                if re.fullmatch(r"(?:19|20)\d{2}", year) and year in text:
+                    it["year"] = year
+        out.append(it)
+    return out
+
+
 def find_titles(inc, cfg: dict) -> dict:
     """{"items": [...], "icons": [...], "level": "list|topic|", "used": [lines], "body": cleaned text}."""
     subj, sym = icon_lib.extract_tags(inc.subject or "", cfg)
@@ -327,7 +357,7 @@ def build_records(cfg: dict, now: datetime, recs: list, icons: list[str]):
     budget = {"ai": 3}
     cards = []
     seen: set[str] = set()
-    for r in recs[: max(1, int(wl.get("max_titles", 5)))]:
+    for r in recs[: max(1, int(wl.get("max_titles", 1)))]:
         if norm(r.title) in seen:
             continue
         seen.add(norm(r.title))
@@ -350,7 +380,9 @@ def build(inc, cfg: dict, now: datetime):
     if MENTION.search(f"{inc.subject}\n{inc.body}"):
         return [], inc                                                       # Pink Panther messages have their own slip
     res = find_titles(inc, cfg)
-    items = res["items"][: max(1, int(wl.get("max_titles", 5)))]
+    items = res["items"][: max(1, int(wl.get("max_titles", 1)))]
+    if items and aicheck.available(cfg, wl.get("ai_check", True)):
+        items = ai_review(items, f"{inc.subject or ''}\n{res['body']}", cfg)
     if not items:
         return [], inc
     cards = [make_card(it, res["icons"], cfg, now) for it in items]

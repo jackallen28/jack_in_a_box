@@ -12,6 +12,7 @@ import logging
 import re
 import secrets
 import time
+from pathlib import Path
 from datetime import datetime
 
 from flask import Flask, Response, jsonify, request, send_file, send_from_directory, session
@@ -761,6 +762,37 @@ def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button, 
                 svc.submit(c, 1)
         return jsonify(cards=out, printed=bool(b.get("print") and cards), **_pp_state())
 
+    # ------------------------------------------------------------------ Automatic reboot
+    @app.get("/api/maintenance")
+    def maintenance_status():
+        m = cfg.data["maintenance"]
+        up = 0.0
+        try:
+            up = float(Path("/proc/uptime").read_text().split()[0])
+        except (OSError, ValueError, IndexError):
+            pass
+        installed = None
+        try:
+            installed = subprocess.run(["systemctl", "is-enabled", "jack-in-a-box-reboot.timer"], capture_output=True, text=True, timeout=5).returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            pass
+        return jsonify(enabled=bool(m.get("reboot_enabled")), every_days=int(m.get("reboot_every_days", 2)), hour=int(m.get("reboot_hour", 3)), timer_installed=installed,
+                       uptime_hours=round(up / 3600, 1), next_at=_next_reboot(m, local_now(cfg.data), up) if m.get("reboot_enabled") else "")
+
+    def _next_reboot(m: dict, now, uptime_s: float) -> str:
+        """When the automatic reboot will next happen (the first chosen hour when the Pi will have been up long enough: at least days*24-2 hours)."""
+        from datetime import timedelta as _td
+        need = max(1, int(m.get("reboot_every_days", 2))) * 24 * 3600 - 2 * 3600
+        hour = min(23, max(0, int(m.get("reboot_hour", 3))))
+        at = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+        if at <= now:
+            at += _td(days=1)
+        for _ in range(40):
+            if uptime_s + (at - now).total_seconds() >= need:
+                return at.strftime("%Y-%m-%d %H:%M")
+            at += _td(days=1)
+        return at.strftime("%Y-%m-%d %H:%M")
+
     # ------------------------------------------------------------------ Features (the setup guide and the Settings tab)
     def _features_state():
         c = cfg.data
@@ -814,6 +846,10 @@ def create_app(cfg: ConfigStore, svc: Service, poller: MailPoller, cal, button, 
         if birthdays is not None:
             birthdays.kick.set()
         return jsonify(added=p, **_bd_state())
+
+    @app.get("/api/birthdays.ics")
+    def bd_ics():
+        return Response(birthdays_mod.to_ics(cfg.data), mimetype="text/calendar", headers={"Content-Disposition": 'attachment; filename="birthdays.ics"'})
 
     @app.put("/api/birthdays/<pid>")
     def bd_update(pid):

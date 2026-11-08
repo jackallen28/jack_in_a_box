@@ -1091,6 +1091,15 @@ function settingsPage(main) {
     h("p", { class: "small" }, "Choose what this Jack in a Box does. ", h("strong", {}, "Only the features switched on here appear in the top menu and run."),
       " Switching one off just hides it: everything you set up for it is kept, and switching it back on finds it as it was. Printer, templates, backup and your account are always there.")));
   main.append(h("div", { class: "card" }, h("h3", {}, "Features"), list));
+  const mstat = h("div", { class: "small", style: "margin-top:8px" });
+  api("/api/maintenance").then(m => {
+    mstat.replaceChildren(...[
+      h("div", { style: `font-weight:600;color:${m.enabled ? "var(--ok)" : "var(--muted)"}` }, m.enabled ? `Reboots every ${m.every_days * 24} hours at ${String(m.hour).padStart(2, "0")}:00.` + (m.next_at ? ` Next: ${m.next_at.replace("T", " ")}.` : "") : "Automatic reboot is off."),
+      h("div", { class: "muted" }, `The Pi has been up ${m.uptime_hours} hours.`),
+      m.enabled && m.timer_installed === false ? h("div", { style: "color:var(--bad)" }, "⚠ The reboot timer isn't installed on this Pi yet. Run once over SSH:  bash ~/jack_in_a_box/deploy/install.sh") : null].filter(Boolean));
+  }).catch(() => {});
+  main.append(h("div", { class: "card" }, h("h3", {}, "Automatic reboot"), form(SCHEMA.sections.maintenance), mstat,
+    h("div", { class: "small muted", style: "margin-top:6px" }, "Done by the Pi itself (a systemd timer), so it happens even if the app has hung. It waits for anything that is printing, and the queue is kept.")));
   main.append(h("div", { class: "card" }, h("h3", {}, "Setup guide"),
     h("p", { class: "small muted" }, "The short guide that runs the first time: choose features, connect the printer, email and calendar. It keeps what you have set up."),
     h("button", { class: "btn", onclick: () => wizard(true) }, "Run the setup guide again")));
@@ -1275,7 +1284,9 @@ function birthdaysPage(main) {
     h("p", { class: "small" }, "Reminders you send that talk about a birthday (“Sarah's birthday on Friday”) are recognised too and print with the same BIRTHDAY look instead of the plain reminder."), status));
   main.append(h("div", { class: "card" }, h("h3", {}, "Add a birthday"), h("div", { class: "row" }, input, h("button", { class: "btn primary", onclick: add }, "Add")),
     h("div", { class: "small muted", style: "margin-top:4px" }, "Name and date, any order: “Sarah 14 March”, “14 Mar Dad”, “Mum 3/4/1960” (with the year born, the slip says how old they turn)."), msg));
-  main.append(h("div", { class: "card" }, h("h3", {}, "Everyone"), list));
+  main.append(h("div", { class: "card" }, h("h3", {}, "Everyone"), list,
+    h("div", { class: "row", style: "margin-top:8px" }, h("button", { class: "btn small", onclick: () => { location.href = "/api/birthdays.ics"; } }, "Download as a calendar file (.ics)")),
+    h("div", { class: "small muted", style: "margin-top:4px" }, "To see them in Google or Apple Calendar: import the file (Google Calendar → Settings → Import & export). Each is a yearly event. The Pi can't write into your Google Calendar itself, because the iCal address it reads is read-only: this list is its own birthday calendar.")));
   main.append(h("div", { class: "card" }, h("h3", {}, "Settings"), form(SCHEMA.sections.birthdays),
     h("div", { class: "small muted", style: "margin-top:8px" }, "The look of the slip (title, symbol size, text size) is the Birthday template on the Templates tab.")));
   load();

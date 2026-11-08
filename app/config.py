@@ -226,6 +226,7 @@ DEFAULTS: dict = {
         "url": "http://127.0.0.1:11434",
         "model": "qwen2.5:0.5b",
         "timeout": 240,             # seconds; a Pi 3B+ can take 1-3 minutes
+        "check_seconds": 20,        # the AI's "does this message make sense?" check may take this long; after that the slip prints without it
         "keep_alive": 0,            # unload the model right after each summary to free the Pi's RAM
         "num_ctx": 2048,
         "num_predict": 260,
@@ -274,9 +275,16 @@ DEFAULTS: dict = {
         "print_time": "07:00",      # HH:MM on the day
         "catch_up": True,           # the Pi was off at that time: print as soon as it is back the same day
         "recognise": True,          # a reminder / calendar event about a birthday is printed with the BIRTHDAY template
-        "learn": False,             # a birthday that comes with a date ("Sarah's birthday is 14 March") is also added to the list
+        "learn": True,              # a birthday reminder ("wish Tom a happy birthday [on 10 November]") is also added to the list, so it comes round every year
+        "ai_check": True,           # with AI mode on, the local AI reads the reminder first and says whether it really is about a person's birthday (time-limited: llm.check_seconds)
         "symbol": "birthday",       # the cake; a name or tag from the Symbols page
         "people": [],               # [{id, name, day, month, year (0 = unknown), note, enabled}] - edited on the Birthdays tab
+    },
+    # Keeping the Pi healthy: a scheduled reboot done by a systemd timer (deploy/auto-reboot.sh), so it works even if the app has hung
+    "maintenance": {
+        "reboot_enabled": True,
+        "reboot_every_days": 2,     # 2 = every 48 hours
+        "reboot_hour": 3,           # at 3 am (the Pi's own clock/timezone)
     },
     # Backing up your settings (app/backup.py)
     "backup": {
@@ -296,7 +304,8 @@ DEFAULTS: dict = {
         "ai": False,                # with AI mode on, the local AI also picks the titles out of a long, chatty email (each title must appear in the text). OFF: on a Pi it takes minutes
         "plot": True,               # a short PLOT line from the email's own "Description:" (2-3 sentences; director, cast, themes are never printed)
         "plot_ai": False,           # with AI mode on, the local AI condenses a long description into 2-4 spoiler-free sentences (else the opening sentences). OFF: on a Pi it takes minutes
-        "max_titles": 5,            # at most this many titles (a slip each) from one message
+        "max_titles": 1,            # at most this many titles (a slip each) from one message: an email names one movie or show
+        "ai_check": True,           # with AI mode on, the local AI reads the message and says whether the title found is really what it is about (time-limited: llm.check_seconds)
     },
     # Share the receipt printer on your network as an AirPrint / IPP Everywhere printer (see app/airprint.py)
     "airprint": {
@@ -430,6 +439,19 @@ class ConfigStore:
         mig["fast_prints"] = True
         return True
 
+    @staticmethod
+    def _one_slip(saved: dict) -> bool:
+        """Once, for a config saved by an earlier version: a movie / TV email makes ONE slip, and birthday reminders are kept on the birthday list."""
+        mig = saved.setdefault("migrations", {})
+        if mig.get("one_slip"):
+            return False
+        if isinstance(saved.get("watchlist"), dict):
+            saved["watchlist"]["max_titles"] = 1
+        if isinstance(saved.get("birthdays"), dict):
+            saved["birthdays"]["learn"] = True
+        mig["one_slip"] = True
+        return True
+
     def load(self) -> None:
         with self._lock:
             saved = {}
@@ -442,7 +464,7 @@ class ConfigStore:
                         self.path.rename(self.path.with_suffix(".json.broken"))
                     except OSError:
                         pass
-            migrated = bool(saved) and self._fast_prints(saved)
+            migrated = bool(saved) and (self._fast_prints(saved) | self._one_slip(saved))
             self._data = normalise(saved)
             if not self.path.exists() or migrated:
                 self.save()

@@ -53,6 +53,12 @@ class Service:
         name = card.template or card.kind
         return render_card(card, c["templates"].get(name) or c["templates"]["reminder"], c["printer"], c["icons"])
 
+    def _recent_duplicate(self, card: Card, minutes: int = 10) -> bool:
+        """The same movie / episode slip already queued a moment ago (an email sent twice by the phone): one print is enough."""
+        since = (datetime.now() - timedelta(minutes=minutes)).isoformat(timespec="seconds")
+        title = (card.heading or card.summary())[:120]
+        return bool(self.db.one("SELECT 1 FROM jobs WHERE kind=? AND title=? AND source='email' AND created>=? AND status!='failed'", (card.kind, title, since)))
+
     def submit(self, card: Card, copies: int = 1, hold: bool = False, due: datetime | None = None) -> list[int]:
         """Queue a printout.  ``hold`` waits for the button; ``due`` (a timezone-aware time in the future) waits until then.
         Either way it is in the queue straight away, so you can see it, cancel it, or press Print now."""
@@ -60,9 +66,15 @@ class Service:
         try:
             card = birthdays.restyle(card, self.cfg.data)            # a reminder about a birthday gets the BIRTHDAY template
             if card.kind == "birthday" and card.source != "birthday":
-                birthdays.learn(card, self.cfg)
+                added = birthdays.learn(card, self.cfg)              # ...and the birthday is kept on your list so it comes round every year
+                if added:
+                    from .models import Section
+                    card.sections.append(Section("notes", text=f"Added {added['name']} to your birthday list: {added['day']} {birthdays.MONTH_NAMES[added['month'] - 1]} every year."))
         except Exception:
             log.exception("Birthday recognition failed (printing the slip as it was)")
+        if card.kind in ("watchlist", "pinkpanther") and card.source == "email" and self._recent_duplicate(card):
+            log.info("Skipped a repeat of %s '%s' (the same slip was queued in the last 10 minutes)", card.kind, (card.heading or "")[:40])
+            return []
         later = due is not None and due > datetime.now(timezone.utc)
         status = "held" if hold else "scheduled" if later else "pending"
         img = self.render(card)

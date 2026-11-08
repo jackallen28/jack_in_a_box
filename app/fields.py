@@ -88,22 +88,26 @@ def parse(body: str, allow_weak: bool = False) -> list[Record]:
     recs: list[Record] = []
     cur: Record | None = None
     role = ""
+    gap = True                         # a blank line has passed since the last title label (or none yet)
     for ln in (body or "").splitlines():
         s = _MD.sub("", ln).rstrip()
         if not s.strip():
-            role = ""
+            role, gap = "", True
             if cur is not None:
                 cur.raw.append(ln)
             continue
         m = _LABEL.match(s)
         label = norm_label(m.group(1)) if m else ""
         value = m.group(2).strip() if m else ""
-        if m and (label in TITLE_STRONG or (allow_weak and label in TITLE_WEAK)) and value and not (label == "episode" and value.isdigit()) and len(value) <= 140:
+        # A title label starts a new record only after a blank line or when it repeats the label that started this one ("Movie: A ... Movie: B").  A stray
+        # "Series: Marvel" or "Show: yes" inside one movie's details is just another detail, so one email about one movie can never become two slips.
+        if m and (label in TITLE_STRONG or (allow_weak and label in TITLE_WEAK)) and value and not (label == "episode" and value.isdigit()) and len(value) <= 140 \
+                and (cur is None or gap or label == cur.label):
             title, year, kind, season = clean_title(value)
             if title:
                 cur = Record(title=title, year=year, type=kind, season=season, label=label, raw=[ln])
                 recs.append(cur)
-                role = "title"
+                role, gap = "title", False
                 continue
         if cur is None:
             continue

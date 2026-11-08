@@ -507,7 +507,7 @@ subject: Watch list
 Dune (2021)
 ```
 
-prints **one slip per title** (normally an email names just one; if it names several, each gets its own slip, up to *Most slips from one message*). A slip is the title as a heading with `TYPE`, `SEASON`,
+prints **one slip per title** (an email names one movie or show, so **one email makes one slip**; raise *Most slips from one message* only if you send several in one email). A slip is the title as a heading with `TYPE`, `SEASON`,
 `YEAR` and `ON` lines under it, only the ones your message gave: `Dune` / `YEAR: 2021`, `Severance` / `TYPE: TV SHOW` / `SEASON: 2`, `The Bear` / `ON: Disney+`. Nothing is looked up or invented: the type, year and service come from the same line you wrote.
 
 * **How it decides a message is about something to watch.** *Watch list*, *to watch*, *watch next* in the subject (or as a header line) means every short line is a title. *Movie, film, TV, series, show,
@@ -541,6 +541,11 @@ The Pi reads these by their labels, whatever the subject says, and **combs them 
 * **Where each goes:** a Pink Panther cartoon (the subject says Pink Panther, the title is one of the shorts, or the description says it is a Pink Panther cartoon/short) gets the PINK PANTHER slip;
   everything else gets WATCH LIST. A Pink Panther short that is in the built-in guide also gets its SEASON and EPISODE, and the email's own date and description are used when the internet lookup finds
   nothing; one that isn't in the guide prints its name and the email's description, with nothing invented.
+* A stray `Series: Marvel` or `Show: no` inside one movie's details is just a detail, not a second movie: a new record starts only after a blank line or when the same label repeats. If your phone sends the same
+  email twice, the second is ignored (the same title within 10 minutes).
+* **The AI reads free-text messages first (when AI mode is on):** for a message the Pi has to read as plain text (not `Movie Name:` lines), the local AI checks the title it found is what the message is about:
+  OK keeps it, it can correct it using only words from the message, and "not a movie" sends the message to the printer as an ordinary reminder instead. It has 20 seconds; if slower or busy the slip prints as
+  the rules read it. Switch it off with *Let the AI check the title makes sense*.
 * A bare `Title:` / `Name:` / `Episode:` label is only trusted when the subject says "watch list" (or similar), so a work email with a "Title:" line is left alone.
 * `Watch list` settings: *Print a short plot line* and *Let the AI condense a long description* (the AI only ever sees the description, and everything it says must come from it).
 
@@ -571,7 +576,14 @@ however many times the Pi restarts, and 29 February people are remembered on 28 
 * **Recognising birthday reminders:** a reminder (email, Google Form, iPhone Shortcut, web *Print*) or a calendar event that talks about a birthday (`Sarah's birthday on Friday`, `birthday: Mum`, `Tom turns 8`)
   is printed with the BIRTHDAY look instead of the plain reminder one. Nothing you wrote is removed, and if there is no heading the name is used as one. Friends' messages, email summaries and templates you
   chose yourself are left alone. Switch it off with *Give birthday reminders the BIRTHDAY template*.
-* **Learning from reminders (off by default):** with *Add birthdays that come with a date to my list* on, `Sarah's birthday is 14 March` also adds Sarah to the list (once), so she comes round every year.
+* **Birthday reminders are kept on the list:** `wish Tom a happy birthday on 10 November` adds Tom for **10 November, every year** (7 am), and the slip says so ("Added Tom to your birthday list: 10 November
+  every year."). With no date it uses the day the reminder is for (`tomorrow`, `on Friday`), otherwise today. It already knows the same person and day, so sending it twice doesn't double it. Names come from
+  `Sarah's birthday`, `wish Tom a happy birthday`, `say happy birthday to Mum`, `Tom turns 8` and similar. Wrong date or name? Fix or remove it on this tab. Switch it off with *Keep birthday reminders on my
+  birthday list*.
+* **The AI checks it first (when AI mode is on):** the local AI reads the reminder and says whether it really is about a person's birthday (`buy birthday candles` isn't: it prints as a plain reminder and nothing
+  is added). Anything it names must appear in your reminder. It has **20 seconds** (`llm.check_seconds`); if it is slower or busy, the slip just prints as the rules read it, so it can never hold a print up.
+* **In your calendar app:** *Download as a calendar file (.ics)* gives every birthday as a yearly all-day event to import into Google / Apple / Outlook Calendar. (The Pi can't write into your Google Calendar by
+  itself: the iCal address it reads is read-only. This list is its own birthday calendar and the 7 am slips are the reminders.)
 * **Look:** the *Birthday* template on the Templates tab (title, symbol size, fonts); the symbol is the cake unless you set another under *Symbol on the slip*.
 
 ## Backing up your settings
@@ -589,6 +601,17 @@ file.
 * **Rescuing a card that died before you had a backup:** if the old card still reads on a computer, copy `jack_in_a_box/data/config.json` off it and choose that file under *Restore* on the new Pi: it is
   accepted just like a backup file.
 * Not backed up: the print history and the saved pictures (they are only the past), and the Pi itself (Wi-Fi, the install): those take a few minutes to redo.
+
+## Automatic reboot (every 48 hours at 3 am)
+
+The Pi reboots itself every **2 days at 3 am** (a fresh start keeps a box that runs all the time healthy). It is done by a systemd timer (`jack-in-a-box-reboot.timer`, installed by the installer), not by the app,
+so it still happens if the app has hung. Every hour the timer runs `deploy/auto-reboot.sh`, which acts only in the chosen hour: it reboots when the Pi has been up at least `days x 24 - 2` hours, so a reboot you did
+yourself resets the count and it never reboots two nights running. It waits (up to 30 minutes) for anything that is printing to finish, and the print queue survives a reboot.
+
+* **Change it:** Settings tab -> *Automatic reboot*: on/off, every N days (2 = 48 hours), at which hour (3 = 3 am, by the Pi's own clock, i.e. the timezone you picked when flashing the card). The card shows when the next
+  one will be and how long the Pi has been up.
+* **Check it:** `bash ~/jack_in_a_box/deploy/auto-reboot.sh ~/jack_in_a_box --dry-run` says what it would do right now and changes nothing; `journalctl -t jack-in-a-box-reboot` shows what it did.
+* **An older install** (set up before this existed) needs `bash ~/jack_in_a_box/deploy/install.sh` run once to add the timer (the Settings card tells you if it's missing). A fresh install has it already.
 
 ## Power, cooling and the email mailbox
 

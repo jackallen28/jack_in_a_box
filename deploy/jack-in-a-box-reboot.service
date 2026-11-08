@@ -1,0 +1,6 @@
+[Unit]
+Description=Jack in a Box - automatic reboot (every N days at the chosen hour)
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash @DIR@/deploy/auto-reboot.sh @DIR@

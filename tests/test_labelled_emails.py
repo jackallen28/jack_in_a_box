@@ -111,7 +111,7 @@ def test_a_movie_gets_the_watch_list_slip_with_type_date_and_a_short_plot_only()
 
 
 def test_all_three_in_one_email_each_go_to_the_right_slip():
-    cards = cards_for(PINK_8 + "\n\n" + FREEDOM + "\n\n" + DEATH)
+    cards = cards_for(PINK_8 + "\n\n" + FREEDOM + "\n\n" + DEATH, cfg=normalise({"watchlist": {"max_titles": 5}}))
     assert [(c.kind, c.heading) for c in cards] == [("pinkpanther", "Pink 8-Ball"), ("watchlist", "Sound of Freedom"), ("watchlist", "Death Becomes Her")]
 
 
